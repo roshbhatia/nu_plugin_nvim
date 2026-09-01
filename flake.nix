@@ -69,10 +69,15 @@
               platforms = pkgs.lib.platforms.unix;
             };
           };
-          nuPlugin = pkgs.runCommand "nu-plugin-nuvim-0.1.0" { } ''
-            mkdir -p "$out/bin"
-            ln -s ${nuvim}/bin/nu_plugin_nuvim "$out/bin/nu_plugin_nuvim"
-          '';
+          nuPlugin =
+            pkgs.runCommand "nu-plugin-nuvim-0.1.0"
+              {
+                meta.mainProgram = "nu_plugin_nuvim";
+              }
+              ''
+                mkdir -p "$out/bin"
+                ln -s ${nuvim}/bin/nu_plugin_nuvim "$out/bin/nu_plugin_nuvim"
+              '';
           nvimPlugin = pkgs.runCommand "nvim-nu-0.1.0" { } ''
             mkdir -p "$out/lua"
             ln -s ${nuvim}/share/nvim/site/lua/nu.lua "$out/lua/nu.lua"
