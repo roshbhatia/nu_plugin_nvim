@@ -1,0 +1,18 @@
+[package]
+name = "nuvim-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rmpv.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[lints]
+workspace = true

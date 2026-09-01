@@ -1,0 +1,21 @@
+[package]
+name = "nu-plugin-nuvim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nu_plugin_nuvim"
+path = "src/main.rs"
+
+[dependencies]
+nu-plugin.workspace = true
+nu-protocol.workspace = true
+nuvim-protocol = { path = "../nuvim-protocol" }
+rmpv.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
