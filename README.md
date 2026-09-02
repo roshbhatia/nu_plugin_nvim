@@ -1,5 +1,7 @@
 # Nuvim
 
+![Nuvim structured buffer data](docs/nuvim.png)
+
 Nuvim makes Neovim state available as native Nushell data.
 It also provides a small Rust Neovim module that sends values through Nushell pipelines.
 
@@ -52,6 +54,7 @@ Use the declared development shell for every Rust and Neovim dependency:
 ```sh
 nix develop
 cargo test --workspace
+./hack/screenshots.sh
 ```
 
 ## Nushell commands

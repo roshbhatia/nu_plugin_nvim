@@ -113,6 +113,7 @@
             packages = [
               pkgs.cargo
               pkgs.clippy
+              pkgs.charm-freeze
               pkgs.neovim
               pkgs.nixfmt
               pkgs.nushell
