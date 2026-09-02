@@ -6,7 +6,8 @@ use nu_protocol::{
     Category, LabeledError, PipelineData, Record, Signature, Span, SyntaxShape, Type, Value,
 };
 use nuvim_protocol::{
-    ApiMetadata, HandleKind, NvimHandle, QuickfixItem, RpcClient, discover_server, discover_servers,
+    ApiMetadata, HandleKind, NvimHandle, QuickfixItem, RpcClient, ServerAddress, discover_server,
+    discover_servers,
 };
 use rmpv::Value as RpcValue;
 
@@ -212,19 +213,19 @@ impl PluginCommand for NuvimCommand {
     ) -> Result<PipelineData, LabeledError> {
         let output = match self.0 {
             CommandKind::Root | CommandKind::Servers => servers(call.head),
-            CommandKind::Context => context(call)?,
-            CommandKind::Buffers => buffers(call)?,
-            CommandKind::Text => text(call)?,
-            CommandKind::Selection => selection(call)?,
-            CommandKind::Open => open(call, input)?,
-            CommandKind::Replace => replace(call, input)?,
-            CommandKind::Diagnostics => diagnostics(call)?,
-            CommandKind::QuickfixGet => quickfix_get(call)?,
-            CommandKind::QuickfixSet => quickfix_set(call, input)?,
-            CommandKind::QuickfixOpen => return quickfix_open(call),
+            CommandKind::Context => context(engine, call)?,
+            CommandKind::Buffers => buffers(engine, call)?,
+            CommandKind::Text => text(engine, call)?,
+            CommandKind::Selection => selection(engine, call)?,
+            CommandKind::Open => open(engine, call, input)?,
+            CommandKind::Replace => replace(engine, call, input)?,
+            CommandKind::Diagnostics => diagnostics(engine, call)?,
+            CommandKind::QuickfixGet => quickfix_get(engine, call)?,
+            CommandKind::QuickfixSet => quickfix_set(engine, call, input)?,
+            CommandKind::QuickfixOpen => return quickfix_open(engine, call),
             CommandKind::Scratch => scratch(engine, call, input)?,
-            CommandKind::Call => raw_call(call, input)?,
-            CommandKind::Lua => lua(call, input)?,
+            CommandKind::Call => raw_call(engine, call, input)?,
+            CommandKind::Lua => lua(engine, call, input)?,
         };
         Ok(PipelineData::value(output, None))
     }
@@ -298,18 +299,29 @@ fn server_record(
     ))
 }
 
-fn connect(call: &EvaluatedCall) -> Result<RpcClient, LabeledError> {
+fn connect(engine: &EngineInterface, call: &EvaluatedCall) -> Result<RpcClient, LabeledError> {
     let override_value = call
         .get_flag::<String>("server")
         .map_err(LabeledError::from)?;
-    let address =
-        discover_server(override_value.as_deref()).map_err(|error| labeled(error, call.head))?;
+    let engine_value = if override_value.is_none() {
+        match engine.get_env_var("NVIM").map_err(LabeledError::from)? {
+            Some(value) => Some(value.as_str().map_err(LabeledError::from)?.to_owned()),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let address = match override_value.or(engine_value) {
+        Some(value) => ServerAddress::parse(value),
+        None => discover_server(None),
+    }
+    .map_err(|error| labeled(error, call.head))?;
     RpcClient::connect(&address).map_err(|error| labeled(error, call.head))
 }
 
-fn context(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let buffer = rpc(&mut client, "nvim_get_current_buf", vec![], span)?;
     let window = rpc(&mut client, "nvim_get_current_win", vec![], span)?;
     let tab = rpc(&mut client, "nvim_get_current_tabpage", vec![], span)?;
@@ -347,9 +359,9 @@ fn context(call: &EvaluatedCall) -> Result<Value, LabeledError> {
     ))
 }
 
-fn buffers(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn buffers(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let listed = rpc(&mut client, "nvim_list_bufs", vec![], span)?;
     let listed = rpc_array(&listed, "nvim_list_bufs result", span)?;
     let rows = listed
@@ -359,9 +371,9 @@ fn buffers(call: &EvaluatedCall) -> Result<Value, LabeledError> {
     Ok(Value::list(rows, span))
 }
 
-fn text(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn text(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let buffer = selected_buffer(&mut client, call, span)?;
     let start = call
         .get_flag::<i64>("start")
@@ -423,9 +435,9 @@ fn text_for_buffer(
     ))
 }
 
-fn selection(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn selection(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let result = rpc(
         &mut client,
         "nvim_exec_lua",
@@ -435,7 +447,11 @@ fn selection(call: &EvaluatedCall) -> Result<Value, LabeledError> {
     msgpack_to_nu(&result, client.server(), span)
 }
 
-fn open(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError> {
+fn open(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
     let span = call.head;
     let mut paths = paths_from_input(input.into_value(span).map_err(LabeledError::from)?, span)?;
     paths.extend(call.rest::<PathBuf>(0).map_err(LabeledError::from)?);
@@ -445,7 +461,7 @@ fn open(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError
             span,
         ));
     }
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let mut opened = Vec::with_capacity(paths.len());
     for path in paths {
         let path = path.to_string_lossy().into_owned();
@@ -485,7 +501,11 @@ fn open(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError
     Ok(Value::list(opened, span))
 }
 
-fn replace(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError> {
+fn replace(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
     let span = call.head;
     let value = input.into_value(span).map_err(LabeledError::from)?;
     let lines = value_to_lines(&value, None, span)?;
@@ -495,7 +515,7 @@ fn replace(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledEr
             .map(|line| RpcValue::from(line.clone()))
             .collect(),
     );
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let selection = call.has_flag("selection").map_err(LabeledError::from)?;
     let buffer = selected_buffer(&mut client, call, span)?;
     if selection {
@@ -525,9 +545,9 @@ fn replace(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledEr
     text_for_buffer(&mut client, &buffer, 0, -1, span)
 }
 
-fn diagnostics(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn diagnostics(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let result = rpc(
         &mut client,
         "nvim_exec_lua",
@@ -537,9 +557,9 @@ fn diagnostics(call: &EvaluatedCall) -> Result<Value, LabeledError> {
     msgpack_to_nu(&result, client.server(), span)
 }
 
-fn quickfix_get(call: &EvaluatedCall) -> Result<Value, LabeledError> {
+fn quickfix_get(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let result = rpc(
         &mut client,
         "nvim_exec_lua",
@@ -549,7 +569,11 @@ fn quickfix_get(call: &EvaluatedCall) -> Result<Value, LabeledError> {
     msgpack_to_nu(&result, client.server(), span)
 }
 
-fn quickfix_set(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError> {
+fn quickfix_set(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
     let span = call.head;
     let value = input.into_value(span).map_err(LabeledError::from)?;
     let values: Vec<&Value> = match &value {
@@ -578,7 +602,7 @@ fn quickfix_set(call: &EvaluatedCall, input: PipelineData) -> Result<Value, Labe
         .get_flag::<String>("title")
         .map_err(LabeledError::from)?
         .unwrap_or_else(|| "Nuvim".into());
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     rpc(
         &mut client,
         "nvim_call_function",
@@ -604,14 +628,17 @@ fn quickfix_set(call: &EvaluatedCall, input: PipelineData) -> Result<Value, Labe
     ))
 }
 
-fn quickfix_open(call: &EvaluatedCall) -> Result<PipelineData, LabeledError> {
+fn quickfix_open(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+) -> Result<PipelineData, LabeledError> {
     let span = call.head;
     let height = call.get_flag::<i64>("height").map_err(LabeledError::from)?;
     if height.is_some_and(|height| height <= 0) {
         return Err(labeled("quickfix height must be greater than zero", span));
     }
     let command = height.map_or_else(|| "copen".into(), |height| format!("{height}copen"));
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     rpc(
         &mut client,
         "nvim_command",
@@ -630,7 +657,7 @@ fn scratch(
     let value = input.into_value(span).map_err(LabeledError::from)?;
     let config = engine.get_config().map_err(LabeledError::from)?;
     let lines = value_to_lines(&value, Some(&config), span)?;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let buffer = rpc(
         &mut client,
         "nvim_create_buf",
@@ -681,7 +708,11 @@ fn scratch(
     buffer_record(&mut client, &buffer, span)
 }
 
-fn raw_call(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError> {
+fn raw_call(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
     let span = call.head;
     let method = call.req::<String>(0).map_err(LabeledError::from)?;
     let mut arguments = call.rest::<Value>(1).map_err(LabeledError::from)?;
@@ -693,7 +724,7 @@ fn raw_call(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledE
         .iter()
         .map(nu_to_msgpack)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let api_info = rpc(&mut client, "nvim_get_api_info", vec![], span)?;
     let metadata = ApiMetadata::from_api_info(&api_info).map_err(|error| labeled(error, span))?;
     let function = metadata.function(&method).ok_or_else(|| {
@@ -716,7 +747,11 @@ fn raw_call(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledE
     msgpack_to_nu(&result, client.server(), span)
 }
 
-fn lua(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError> {
+fn lua(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
     let span = call.head;
     let code = call.req::<String>(0).map_err(LabeledError::from)?;
     let mut arguments = call.rest::<Value>(1).map_err(LabeledError::from)?;
@@ -728,7 +763,7 @@ fn lua(call: &EvaluatedCall, input: PipelineData) -> Result<Value, LabeledError>
         .iter()
         .map(nu_to_msgpack)
         .collect::<Result<Vec<_>, _>>()?;
-    let mut client = connect(call)?;
+    let mut client = connect(engine, call)?;
     let result = rpc(
         &mut client,
         "nvim_exec_lua",
