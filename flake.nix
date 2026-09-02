@@ -46,23 +46,19 @@
             pname = "nuvim";
             version = "0.1.0";
             src = self;
-            cargoHash = "sha256-GKF8xyR0TPMH1T6UFr7PDScnJHTI0I/NwACzTxIGKRI=";
-            NUVIM_NU_BIN = nixpkgs.lib.getExe pkgs.nushell;
+            cargoHash = "sha256-X06BZn3nG4GA5fV46hARcoNfMSC/yxMztYG0j3D0ZnQ=";
             nativeCheckInputs = [
               pkgs.neovim
               pkgs.nushell
+              pkgs.rustfmt
             ];
             cargoBuildFlags = [ "--workspace" ];
             cargoTestFlags = [ "--workspace" ];
-            postInstall = ''
-              mkdir -p "$out/share/nvim/site/lua"
-              cp lua/nu.lua "$out/share/nvim/site/lua/nu.lua"
-              nuvim_library="$(find target -type f \( -name libnvim_nu.dylib -o -name libnvim_nu.so \) -print -quit)"
-              test -n "$nuvim_library"
-              cp "$nuvim_library" "$out/share/nvim/site/lua/nvim_nu.so"
+            postCheck = ''
+              cargo run -p nuvim-codegen -- --check
             '';
             meta = {
-              description = "Treat Neovim as a Nushell structured-data source and sink";
+              description = "Treat Neovim as a Nushell structured-data source and sink over RPC";
               homepage = "https://github.com/roshbhatia/nu_plugin_nvim";
               license = pkgs.lib.licenses.mit;
               mainProgram = "nu_plugin_nuvim";
@@ -78,16 +74,10 @@
                 mkdir -p "$out/bin"
                 ln -s ${nuvim}/bin/nu_plugin_nuvim "$out/bin/nu_plugin_nuvim"
               '';
-          nvimPlugin = pkgs.runCommand "nvim-nu-0.1.0" { } ''
-            mkdir -p "$out/lua"
-            ln -s ${nuvim}/share/nvim/site/lua/nu.lua "$out/lua/nu.lua"
-            ln -s ${nuvim}/share/nvim/site/lua/nvim_nu.so "$out/lua/nvim_nu.so"
-          '';
         in
         {
           inherit nuvim;
           nu-plugin = nuPlugin;
-          nvim-plugin = nvimPlugin;
           default = nuvim;
         }
       );

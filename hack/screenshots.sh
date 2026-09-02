@@ -18,7 +18,7 @@ mkdir -p "$repo_dir/docs"
 package=$(nix build --no-link --print-out-paths)
 server="$fixture/nvim.sock"
 
-nvim --headless --clean --listen "$server" README.md lua/nu.lua \
+nvim --headless --clean --listen "$server" README.md \
   "+filetype on" \
   "+edit README.md" \
   "+call append(0, '-- demo edit')" \

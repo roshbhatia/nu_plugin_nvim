@@ -5,7 +5,6 @@
 ![Nuvim animated structured editor workflows](docs/nuvim.gif)
 
 Nuvim makes Neovim state available as native Nushell data.
-It also provides a small Rust Neovim module that sends values through Nushell pipelines.
 
 Rows and columns are zero-based in every Nuvim command.
 Columns are UTF-8 byte offsets, which matches the Neovim API.
@@ -17,10 +16,8 @@ It uses a command-specific `--server` override first, then `$NVIM`, then Neovim'
 One discovered session is selected automatically. `nuvim` lists live sessions when more than one editor is running.
 This side cannot use `nvim-oxi` because that crate needs Neovim symbols inside the editor process.
 
-The `nvim-nu` crate uses `nvim-oxi` inside Neovim.
-Its `require("nu")` API starts bounded Nushell child processes for reverse-direction evaluation.
-
-The shared `nuvim-protocol` crate owns RPC framing, handle types, server discovery, API metadata, and quickfix conversion.
+The shared `nuvim-protocol` crate owns RPC framing, handle types, server discovery, generated API methods, and quickfix conversion.
+`nuvim-codegen` reads `nvim --api-info` and generates the Rust client and API metadata used by the Nushell plugin.
 See [the architecture note](docs/architecture.md) for the protocol and future session design.
 
 ## Nix installation
@@ -40,65 +37,8 @@ plugin add (realpath ./result/bin/nu_plugin_nuvim)
 Nushell loads the registered `nuvim` commands on its next start.
 Use `plugin use nuvim` to reload them in an existing session.
 
-Add the Neovim package output to `runtimepath`, then require the module:
-
-```lua
-vim.opt.runtimepath:prepend("/path/to/result/share/nvim/site")
-local nu = require("nu")
-```
-
-The companion module is optional. Nuvim can discover and control every normal Neovim process without an editor-side hook.
-
-`vim.pack` can manage the source checkout while Nix builds the native module:
-
-```lua
-local name = "nu_plugin_nvim"
-
-local function build(path)
-  local output = path .. "/.nuvim-plugin"
-  local result = vim.system({ "nix", "build", path .. "#nvim-plugin", "--out-link", output }):wait()
-  assert(result.code == 0, result.stderr)
-  vim.opt.runtimepath:prepend(output)
-end
-
-vim.api.nvim_create_autocmd("PackChanged", {
-  callback = function(event)
-    if event.data.spec.name == name and event.data.kind ~= "delete" then
-      build(event.data.path)
-    end
-  end,
-})
-
-vim.pack.add({ { src = "https://github.com/roshbhatia/nu_plugin_nvim", name = name } })
-local plugin = vim.pack.get({ name })[1]
-local output = plugin.path .. "/.nuvim-plugin"
-if vim.uv.fs_stat(output) then
-  vim.opt.runtimepath:prepend(output)
-else
-  build(plugin.path)
-end
-```
-
-The equivalent `lazy.nvim` entry is:
-
-```lua
-{
-  "roshbhatia/nu_plugin_nvim",
-  build = function(plugin)
-    local output = plugin.dir .. "/.nuvim-plugin"
-    local result = vim.system({ "nix", "build", plugin.dir .. "#nvim-plugin", "--out-link", output }):wait()
-    assert(result.code == 0, result.stderr)
-  end,
-  config = function(plugin)
-    vim.opt.runtimepath:prepend(plugin.dir .. "/.nuvim-plugin")
-  end,
-}
-```
-
-Nix consumers can use `packages.<system>.default`, `packages.<system>.nu-plugin`, or `packages.<system>.nvim-plugin`.
-The default package contains both sides.
-The Nix-built Neovim module uses the Nushell binary from its package closure.
-Source builds use `nu` from `PATH`, or `NUVIM_NU_BIN` when set.
+Nix consumers can use `packages.<system>.default` or `packages.<system>.nu-plugin`.
+Neovim needs no editor-side plugin. Start it with `--listen`, set `$NVIM`, or let Nuvim discover its socket.
 
 Use the declared development shell for every Rust and Neovim dependency:
 
@@ -141,9 +81,8 @@ Buffer, window, and tab records include IDs and server identity.
 Raw handle results use `{type: "nvim-handle", kind, id, server}` records instead of bare integers.
 Unknown MessagePack extensions and maps with non-string keys use tagged records without data loss.
 
-`nuvim call` reads `nvim_get_api_info()` before each call.
-It rejects unknown methods and incorrect argument counts.
-The metadata layer can provide dynamic completions later without changing the transport.
+`nuvim call` validates methods and argument counts against generated API metadata.
+The generator reads the same `nvim --api-info` specification used to produce the typed Rust client.
 
 ## Demo
 
@@ -243,22 +182,6 @@ Other Nushell values use Nushell's expanded structured representation.
 ls | nuvim scratch --name files --filetype nuon
 ```
 
-## Neovim API
-
-The companion module exposes:
-
-```lua
-local nu = require("nu")
-
-nu.eval("ls | where size > 10mb")
-nu.filter("str uppercase", "hello")
-nu.call("str length", "hello")
-```
-
-Version 0.1 uses JSON between Neovim and each child process.
-These calls are synchronous and can block Neovim during long pipelines.
-The errors include the operation, exit status, and complete Nushell stderr.
-
 ## Recipes
 
 The [recipes directory](recipes) contains one folder per workflow.
@@ -281,5 +204,3 @@ Signal cleanup must detach buffers and delete temporary autocmds.
 
 - [`nu-plugin 0.115.1`](https://docs.rs/nu-plugin/0.115.1/nu_plugin/)
 - [Neovim API and MessagePack-RPC](https://neovim.io/doc/user/api/)
-- [`nvim-oxi 0.6.0`](https://docs.rs/nvim-oxi/0.6.0/nvim_oxi/)
-- [`nvim-rs 0.9.2`](https://docs.rs/nvim-rs/0.9.2/nvim_rs/)

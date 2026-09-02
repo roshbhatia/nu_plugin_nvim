@@ -1315,81 +1315,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nuvim-codegen"
+version = "0.1.0"
+dependencies = [
+ "rmpv",
+]
+
+[[package]]
 name = "nuvim-protocol"
 version = "0.1.0"
 dependencies = [
  "rmpv",
  "serde",
  "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nvim-nu"
-version = "0.1.0"
-dependencies = [
- "nvim-oxi",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nvim-oxi"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54489e0e1515ff8fdbd07eb198ac1f8b082b849e2ed3b7607d6705e24b74af5c"
-dependencies = [
- "nvim-oxi-api",
- "nvim-oxi-luajit",
- "nvim-oxi-macros",
- "nvim-oxi-types",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nvim-oxi-api"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89a662cfeae9de93b4a6a1779e9e37e15c354f8f9acc933e2d79105d601c8fd4"
-dependencies = [
- "nvim-oxi-luajit",
- "nvim-oxi-macros",
- "nvim-oxi-types",
- "serde",
- "serde_repr",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nvim-oxi-luajit"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba46ec2ab57e840cd33067e0d1d7c89c2c7feafd02bbbb11a90a4220491a1c9"
-dependencies = [
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nvim-oxi-macros"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c03daabc1d9efd2d5aff2746199b4ed60f2cc24c321d6fcb2aa023169b0f13"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "nvim-oxi-types"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f079f687853419cf83879ab060d23171e31689d090a0c8d5c6aa0e3210c83ec"
-dependencies = [
- "libc",
- "nvim-oxi-luajit",
- "serde",
  "thiserror 2.0.20",
 ]
 
@@ -1834,17 +1772,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_repr"
-version = "0.1.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.4",
 ]
 
 [[package]]

@@ -6,8 +6,8 @@ use nu_protocol::{
     Category, LabeledError, PipelineData, Record, Signature, Span, SyntaxShape, Type, Value,
 };
 use nuvim_protocol::{
-    ApiMetadata, HandleKind, NvimHandle, QuickfixItem, RpcClient, ServerAddress, discover_server,
-    discover_servers,
+    HandleKind, NvimHandle, QuickfixItem, RpcClient, RpcError, ServerAddress, api_function,
+    discover_server, discover_servers,
 };
 use rmpv::Value as RpcValue;
 
@@ -254,21 +254,17 @@ fn server_record(
 ) -> Result<Value, LabeledError> {
     let mut client = RpcClient::connect_with_timeout(address, Duration::from_millis(250))
         .map_err(|error| labeled(error, span))?;
-    let buffer = rpc(&mut client, "nvim_get_current_buf", vec![], span)?;
-    let path = rpc(&mut client, "nvim_buf_get_name", vec![buffer], span)?;
+    let buffer = rpc(client.nvim_get_current_buf(), span)?;
+    let path = rpc(client.nvim_buf_get_name([buffer]), span)?;
     let cwd = rpc(
-        &mut client,
-        "nvim_call_function",
-        vec![RpcValue::from("getcwd"), RpcValue::Array(vec![])],
+        client.nvim_call_function([RpcValue::from("getcwd"), RpcValue::Array(vec![])]),
         span,
     )?;
     let pid = rpc(
-        &mut client,
-        "nvim_call_function",
-        vec![RpcValue::from("getpid"), RpcValue::Array(vec![])],
+        client.nvim_call_function([RpcValue::from("getpid"), RpcValue::Array(vec![])]),
         span,
     )?;
-    let mode = rpc(&mut client, "nvim_get_mode", vec![], span)?;
+    let mode = rpc(client.nvim_get_mode(), span)?;
     let path = rpc_string(&path, "buffer name")?;
     let cwd = rpc_string(&cwd, "working directory")?;
     let label = Path::new(path)
@@ -322,20 +318,13 @@ fn connect(engine: &EngineInterface, call: &EvaluatedCall) -> Result<RpcClient, 
 fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
     let mut client = connect(engine, call)?;
-    let buffer = rpc(&mut client, "nvim_get_current_buf", vec![], span)?;
-    let window = rpc(&mut client, "nvim_get_current_win", vec![], span)?;
-    let tab = rpc(&mut client, "nvim_get_current_tabpage", vec![], span)?;
-    let mode = rpc(&mut client, "nvim_get_mode", vec![], span)?;
-    let cursor = rpc(
-        &mut client,
-        "nvim_win_get_cursor",
-        vec![window.clone()],
-        span,
-    )?;
+    let buffer = rpc(client.nvim_get_current_buf(), span)?;
+    let window = rpc(client.nvim_get_current_win(), span)?;
+    let tab = rpc(client.nvim_get_current_tabpage(), span)?;
+    let mode = rpc(client.nvim_get_mode(), span)?;
+    let cursor = rpc(client.nvim_win_get_cursor([window.clone()]), span)?;
     let cwd = rpc(
-        &mut client,
-        "nvim_call_function",
-        vec![RpcValue::from("getcwd"), RpcValue::Array(vec![])],
+        client.nvim_call_function([RpcValue::from("getcwd"), RpcValue::Array(vec![])]),
         span,
     )?;
     let server = client.server().to_owned();
@@ -362,7 +351,7 @@ fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, Labe
 fn buffers(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
     let mut client = connect(engine, call)?;
-    let listed = rpc(&mut client, "nvim_list_bufs", vec![], span)?;
+    let listed = rpc(client.nvim_list_bufs(), span)?;
     let listed = rpc_array(&listed, "nvim_list_bufs result", span)?;
     let rows = listed
         .iter()
@@ -400,14 +389,12 @@ fn text_for_buffer(
     span: Span,
 ) -> Result<Value, LabeledError> {
     let result = rpc(
-        client,
-        "nvim_buf_get_lines",
-        vec![
+        client.nvim_buf_get_lines([
             buffer.clone(),
             RpcValue::from(start),
             RpcValue::from(end),
             RpcValue::Boolean(true),
-        ],
+        ]),
         span,
     )?;
     let raw_lines = rpc_array(&result, "buffer lines", span)?;
@@ -439,9 +426,7 @@ fn selection(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, La
     let span = call.head;
     let mut client = connect(engine, call)?;
     let result = rpc(
-        &mut client,
-        "nvim_exec_lua",
-        vec![RpcValue::from(SELECTION_LUA), RpcValue::Array(vec![])],
+        client.nvim_exec_lua([RpcValue::from(SELECTION_LUA), RpcValue::Array(vec![])]),
         span,
     )?;
     msgpack_to_nu(&result, client.server(), span)
@@ -466,35 +451,26 @@ fn open(
     for path in paths {
         let path = path.to_string_lossy().into_owned();
         let id = rpc(
-            &mut client,
-            "nvim_call_function",
-            vec![
+            client.nvim_call_function([
                 RpcValue::from("bufadd"),
                 RpcValue::Array(vec![RpcValue::from(path)]),
-            ],
+            ]),
             span,
         )?
         .as_u64()
         .ok_or_else(|| labeled("bufadd returned a non-integer buffer ID", span))?;
         rpc(
-            &mut client,
-            "nvim_call_function",
-            vec![
+            client.nvim_call_function([
                 RpcValue::from("bufload"),
                 RpcValue::Array(vec![RpcValue::from(id)]),
-            ],
+            ]),
             span,
         )?;
         let buffer = NvimHandle::new(HandleKind::Buffer, id)
             .to_rpc_value()
             .map_err(|error| labeled(error, span))?;
         if opened.is_empty() {
-            rpc(
-                &mut client,
-                "nvim_set_current_buf",
-                vec![buffer.clone()],
-                span,
-            )?;
+            rpc(client.nvim_set_current_buf([buffer.clone()]), span)?;
         }
         opened.push(buffer_record(&mut client, &buffer, span)?);
     }
@@ -520,25 +496,21 @@ fn replace(
     let buffer = selected_buffer(&mut client, call, span)?;
     if selection {
         rpc(
-            &mut client,
-            "nvim_exec_lua",
-            vec![
+            client.nvim_exec_lua([
                 RpcValue::from(REPLACE_SELECTION_LUA),
                 RpcValue::Array(vec![rpc_lines]),
-            ],
+            ]),
             span,
         )?;
     } else {
         rpc(
-            &mut client,
-            "nvim_buf_set_lines",
-            vec![
+            client.nvim_buf_set_lines([
                 buffer.clone(),
                 RpcValue::from(0),
                 RpcValue::from(-1),
                 RpcValue::Boolean(true),
                 rpc_lines,
-            ],
+            ]),
             span,
         )?;
     }
@@ -549,9 +521,7 @@ fn diagnostics(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, 
     let span = call.head;
     let mut client = connect(engine, call)?;
     let result = rpc(
-        &mut client,
-        "nvim_exec_lua",
-        vec![RpcValue::from(DIAGNOSTICS_LUA), RpcValue::Array(vec![])],
+        client.nvim_exec_lua([RpcValue::from(DIAGNOSTICS_LUA), RpcValue::Array(vec![])]),
         span,
     )?;
     msgpack_to_nu(&result, client.server(), span)
@@ -561,9 +531,7 @@ fn quickfix_get(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value,
     let span = call.head;
     let mut client = connect(engine, call)?;
     let result = rpc(
-        &mut client,
-        "nvim_exec_lua",
-        vec![RpcValue::from(QUICKFIX_GET_LUA), RpcValue::Array(vec![])],
+        client.nvim_exec_lua([RpcValue::from(QUICKFIX_GET_LUA), RpcValue::Array(vec![])]),
         span,
     )?;
     msgpack_to_nu(&result, client.server(), span)
@@ -604,9 +572,7 @@ fn quickfix_set(
         .unwrap_or_else(|| "Nuvim".into());
     let mut client = connect(engine, call)?;
     rpc(
-        &mut client,
-        "nvim_call_function",
-        vec![
+        client.nvim_call_function([
             RpcValue::from("setqflist"),
             RpcValue::Array(vec![
                 RpcValue::Array(vec![]),
@@ -616,7 +582,7 @@ fn quickfix_set(
                     (RpcValue::from("items"), RpcValue::Array(items)),
                 ]),
             ]),
-        ],
+        ]),
         span,
     )?;
     Ok(record(
@@ -639,12 +605,7 @@ fn quickfix_open(
     }
     let command = height.map_or_else(|| "copen".into(), |height| format!("{height}copen"));
     let mut client = connect(engine, call)?;
-    rpc(
-        &mut client,
-        "nvim_command",
-        vec![RpcValue::from(command)],
-        span,
-    )?;
+    rpc(client.nvim_command([RpcValue::from(command)]), span)?;
     Ok(PipelineData::empty())
 }
 
@@ -659,21 +620,17 @@ fn scratch(
     let lines = value_to_lines(&value, Some(&config), span)?;
     let mut client = connect(engine, call)?;
     let buffer = rpc(
-        &mut client,
-        "nvim_create_buf",
-        vec![RpcValue::Boolean(false), RpcValue::Boolean(true)],
+        client.nvim_create_buf([RpcValue::Boolean(false), RpcValue::Boolean(true)]),
         span,
     )?;
     rpc(
-        &mut client,
-        "nvim_buf_set_lines",
-        vec![
+        client.nvim_buf_set_lines([
             buffer.clone(),
             RpcValue::from(0),
             RpcValue::from(-1),
             RpcValue::Boolean(true),
             RpcValue::Array(lines.into_iter().map(RpcValue::from).collect()),
-        ],
+        ]),
         span,
     )?;
     if let Some(name) = call
@@ -681,9 +638,7 @@ fn scratch(
         .map_err(LabeledError::from)?
     {
         rpc(
-            &mut client,
-            "nvim_buf_set_name",
-            vec![buffer.clone(), RpcValue::from(name)],
+            client.nvim_buf_set_name([buffer.clone(), RpcValue::from(name)]),
             span,
         )?;
     }
@@ -699,12 +654,7 @@ fn scratch(
             span,
         )?;
     }
-    rpc(
-        &mut client,
-        "nvim_set_current_buf",
-        vec![buffer.clone()],
-        span,
-    )?;
+    rpc(client.nvim_set_current_buf([buffer.clone()]), span)?;
     buffer_record(&mut client, &buffer, span)
 }
 
@@ -725,11 +675,9 @@ fn raw_call(
         .map(nu_to_msgpack)
         .collect::<Result<Vec<_>, _>>()?;
     let mut client = connect(engine, call)?;
-    let api_info = rpc(&mut client, "nvim_get_api_info", vec![], span)?;
-    let metadata = ApiMetadata::from_api_info(&api_info).map_err(|error| labeled(error, span))?;
-    let function = metadata.function(&method).ok_or_else(|| {
+    let function = api_function(&method).ok_or_else(|| {
         labeled(
-            format!("Neovim API metadata does not contain method {method}"),
+            format!("generated Neovim API metadata does not contain method {method}"),
             call.positional.first().map_or(span, Value::span),
         )
     })?;
@@ -743,7 +691,7 @@ fn raw_call(
             span,
         ));
     }
-    let result = rpc(&mut client, &method, arguments, span)?;
+    let result = rpc(client.call(&method, arguments), span)?;
     msgpack_to_nu(&result, client.server(), span)
 }
 
@@ -765,23 +713,14 @@ fn lua(
         .collect::<Result<Vec<_>, _>>()?;
     let mut client = connect(engine, call)?;
     let result = rpc(
-        &mut client,
-        "nvim_exec_lua",
-        vec![RpcValue::from(code), RpcValue::Array(arguments)],
+        client.nvim_exec_lua([RpcValue::from(code), RpcValue::Array(arguments)]),
         span,
     )?;
     msgpack_to_nu(&result, client.server(), span)
 }
 
-fn rpc(
-    client: &mut RpcClient,
-    method: &str,
-    arguments: Vec<RpcValue>,
-    span: Span,
-) -> Result<RpcValue, LabeledError> {
-    client
-        .call(method, arguments)
-        .map_err(|error| labeled(error, span))
+fn rpc(result: Result<RpcValue, RpcError>, span: Span) -> Result<RpcValue, LabeledError> {
+    result.map_err(|error| labeled(error, span))
 }
 
 fn buffer_record(
@@ -789,14 +728,9 @@ fn buffer_record(
     buffer: &RpcValue,
     span: Span,
 ) -> Result<Value, LabeledError> {
-    let name = rpc(client, "nvim_buf_get_name", vec![buffer.clone()], span)?;
-    let changedtick = rpc(
-        client,
-        "nvim_buf_get_changedtick",
-        vec![buffer.clone()],
-        span,
-    )?;
-    let loaded = rpc(client, "nvim_buf_is_loaded", vec![buffer.clone()], span)?;
+    let name = rpc(client.nvim_buf_get_name([buffer.clone()]), span)?;
+    let changedtick = rpc(client.nvim_buf_get_changedtick([buffer.clone()]), span)?;
+    let loaded = rpc(client.nvim_buf_is_loaded([buffer.clone()]), span)?;
     let filetype = get_buffer_option(client, buffer, "filetype", span)?;
     let modified = get_buffer_option(client, buffer, "modified", span)?;
     let handle = NvimHandle::from_rpc_value(buffer).map_err(|error| labeled(error, span))?;
@@ -835,8 +769,8 @@ fn window_record(
     window: &RpcValue,
     span: Span,
 ) -> Result<Value, LabeledError> {
-    let width = rpc(client, "nvim_win_get_width", vec![window.clone()], span)?;
-    let height = rpc(client, "nvim_win_get_height", vec![window.clone()], span)?;
+    let width = rpc(client.nvim_win_get_width([window.clone()]), span)?;
+    let height = rpc(client.nvim_win_get_height([window.clone()]), span)?;
     let handle = NvimHandle::from_rpc_value(window).map_err(|error| labeled(error, span))?;
     Ok(record(
         [
@@ -909,7 +843,7 @@ fn selected_buffer(
             .to_rpc_value()
             .map_err(|error| labeled(error, span));
     }
-    rpc(client, "nvim_get_current_buf", vec![], span)
+    rpc(client.nvim_get_current_buf(), span)
 }
 
 fn get_buffer_option(
@@ -919,12 +853,10 @@ fn get_buffer_option(
     span: Span,
 ) -> Result<RpcValue, LabeledError> {
     rpc(
-        client,
-        "nvim_get_option_value",
-        vec![
+        client.nvim_get_option_value([
             RpcValue::from(name),
             RpcValue::Map(vec![(RpcValue::from("buf"), buffer.clone())]),
-        ],
+        ]),
         span,
     )
 }
@@ -937,13 +869,11 @@ fn set_buffer_option(
     span: Span,
 ) -> Result<(), LabeledError> {
     rpc(
-        client,
-        "nvim_set_option_value",
-        vec![
+        client.nvim_set_option_value([
             RpcValue::from(name),
             value,
             RpcValue::Map(vec![(RpcValue::from("buf"), buffer.clone())]),
-        ],
+        ]),
         span,
     )?;
     Ok(())
