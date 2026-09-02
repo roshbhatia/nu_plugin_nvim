@@ -19,16 +19,21 @@ enum CommandKind {
     Root,
     Servers,
     Context,
+    Cursor,
+    CursorSet,
     Buffers,
+    BufferUse,
     Text,
     Selection,
     Open,
+    Edit,
     Replace,
     Diagnostics,
     QuickfixGet,
     QuickfixSet,
     QuickfixOpen,
     Scratch,
+    Command,
     Call,
     Lua,
 }
@@ -37,23 +42,29 @@ struct NuvimCommand(CommandKind);
 
 pub fn all() -> Vec<Box<dyn PluginCommand<Plugin = NuvimPlugin>>> {
     use CommandKind::{
-        Buffers, Call, Context, Diagnostics, Lua, Open, QuickfixGet, QuickfixOpen, QuickfixSet,
-        Replace, Root, Scratch, Selection, Servers, Text,
+        BufferUse, Buffers, Call, Command, Context, Cursor, CursorSet, Diagnostics, Edit, Lua,
+        Open, QuickfixGet, QuickfixOpen, QuickfixSet, Replace, Root, Scratch, Selection, Servers,
+        Text,
     };
     [
         Root,
         Servers,
         Context,
+        Cursor,
+        CursorSet,
         Buffers,
+        BufferUse,
         Text,
         Selection,
         Open,
+        Edit,
         Replace,
         Diagnostics,
         QuickfixGet,
         QuickfixSet,
         QuickfixOpen,
         Scratch,
+        Command,
         Call,
         Lua,
     ]
@@ -70,16 +81,21 @@ impl PluginCommand for NuvimCommand {
             CommandKind::Root => "nuvim",
             CommandKind::Servers => "nuvim servers",
             CommandKind::Context => "nuvim context",
+            CommandKind::Cursor => "nuvim cursor",
+            CommandKind::CursorSet => "nuvim cursor set",
             CommandKind::Buffers => "nuvim buffers",
+            CommandKind::BufferUse => "nuvim buffer use",
             CommandKind::Text => "nuvim text",
             CommandKind::Selection => "nuvim selection",
             CommandKind::Open => "nuvim open",
+            CommandKind::Edit => "nuvim edit",
             CommandKind::Replace => "nuvim replace",
             CommandKind::Diagnostics => "nuvim diagnostics",
             CommandKind::QuickfixGet => "nuvim quickfix get",
             CommandKind::QuickfixSet => "nuvim quickfix set",
             CommandKind::QuickfixOpen => "nuvim quickfix open",
             CommandKind::Scratch => "nuvim scratch",
+            CommandKind::Command => "nuvim command",
             CommandKind::Call => "nuvim call",
             CommandKind::Lua => "nuvim lua",
         }
@@ -92,27 +108,20 @@ impl PluginCommand for NuvimCommand {
                 Type::Nothing,
                 Type::List(Type::Record(vec![].into()).into()),
             ),
-            CommandKind::Context | CommandKind::Selection => {
+            CommandKind::Context | CommandKind::Cursor | CommandKind::Selection => {
                 server_flag(signature).input_output_type(Type::Nothing, Type::Record(vec![].into()))
             }
             CommandKind::Buffers | CommandKind::Diagnostics | CommandKind::QuickfixGet => {
                 server_flag(signature)
                     .input_output_type(Type::Nothing, Type::List(Type::Any.into()))
             }
-            CommandKind::Text => server_flag(signature)
-                .named(
-                    "buffer",
-                    SyntaxShape::Int,
-                    "Buffer ID; defaults to the current buffer",
-                    Some('b'),
-                )
-                .named("start", SyntaxShape::Int, "First zero-based row", None)
-                .named(
-                    "end",
-                    SyntaxShape::Int,
-                    "Exclusive zero-based row; defaults to the buffer end",
-                    None,
-                )
+            CommandKind::Text => text_signature(signature),
+            CommandKind::CursorSet => server_flag(signature)
+                .required("row", SyntaxShape::Int, "Zero-based cursor row")
+                .required("column", SyntaxShape::Int, "Zero-based cursor byte column")
+                .input_output_type(Type::Nothing, Type::Record(vec![].into())),
+            CommandKind::BufferUse => server_flag(signature)
+                .required("buffer", SyntaxShape::Int, "Buffer ID to make current")
                 .input_output_type(Type::Nothing, Type::Record(vec![].into())),
             CommandKind::Open => server_flag(signature)
                 .rest(
@@ -124,6 +133,7 @@ impl PluginCommand for NuvimCommand {
                     (Type::Nothing, Type::List(Type::Any.into())),
                     (Type::Any, Type::List(Type::Any.into())),
                 ]),
+            CommandKind::Edit => edit_signature(signature),
             CommandKind::Replace => server_flag(signature)
                 .switch("selection", "Replace the last visual selection", None)
                 .named(
@@ -158,6 +168,9 @@ impl PluginCommand for NuvimCommand {
                     Some('f'),
                 )
                 .input_output_type(Type::Any, Type::Record(vec![].into())),
+            CommandKind::Command => server_flag(signature)
+                .required("command", SyntaxShape::String, "Ex command to execute")
+                .input_output_type(Type::Nothing, Type::Record(vec![].into())),
             CommandKind::Call => server_flag(signature)
                 .required("method", SyntaxShape::String, "Neovim API method name")
                 .rest(
@@ -185,16 +198,21 @@ impl PluginCommand for NuvimCommand {
         match self.0 {
             CommandKind::Root | CommandKind::Servers => "List running Neovim sessions",
             CommandKind::Context => "Get current Neovim context as a record",
+            CommandKind::Cursor => "Get the current zero-based cursor position",
+            CommandKind::CursorSet => "Move the cursor to a zero-based position",
             CommandKind::Buffers => "List Neovim buffers as records",
+            CommandKind::BufferUse => "Make a loaded buffer current",
             CommandKind::Text => "Read buffer text and its zero-based row range",
             CommandKind::Selection => "Read the last visual selection as structured text",
             CommandKind::Open => "Open paths from pipeline input or arguments",
+            CommandKind::Edit => "Replace an exact buffer text range from pipeline input",
             CommandKind::Replace => "Replace a buffer or visual selection with pipeline input",
             CommandKind::Diagnostics => "List Neovim diagnostics as records",
             CommandKind::QuickfixGet => "Get quickfix items with zero-based positions",
             CommandKind::QuickfixSet => "Replace the quickfix list from pipeline records",
             CommandKind::QuickfixOpen => "Open the Neovim quickfix window",
             CommandKind::Scratch => "Open pipeline input in a scratch buffer",
+            CommandKind::Command => "Execute an Ex command and return the resulting context",
             CommandKind::Call => "Call a raw Neovim API method after metadata validation",
             CommandKind::Lua => "Evaluate Lua in Neovim with MessagePack-compatible arguments",
         }
@@ -214,16 +232,21 @@ impl PluginCommand for NuvimCommand {
         let output = match self.0 {
             CommandKind::Root | CommandKind::Servers => servers(call.head),
             CommandKind::Context => context(engine, call)?,
+            CommandKind::Cursor => cursor(engine, call)?,
+            CommandKind::CursorSet => cursor_set(engine, call)?,
             CommandKind::Buffers => buffers(engine, call)?,
+            CommandKind::BufferUse => buffer_use(engine, call)?,
             CommandKind::Text => text(engine, call)?,
             CommandKind::Selection => selection(engine, call)?,
             CommandKind::Open => open(engine, call, input)?,
+            CommandKind::Edit => edit(engine, call, input)?,
             CommandKind::Replace => replace(engine, call, input)?,
             CommandKind::Diagnostics => diagnostics(engine, call)?,
             CommandKind::QuickfixGet => quickfix_get(engine, call)?,
             CommandKind::QuickfixSet => quickfix_set(engine, call, input)?,
             CommandKind::QuickfixOpen => return quickfix_open(engine, call),
             CommandKind::Scratch => scratch(engine, call, input)?,
+            CommandKind::Command => command(engine, call)?,
             CommandKind::Call => raw_call(engine, call, input)?,
             CommandKind::Lua => lua(engine, call, input)?,
         };
@@ -238,6 +261,49 @@ fn server_flag(signature: Signature) -> Signature {
         "Neovim socket path or TCP address; overrides $NVIM",
         Some('s'),
     )
+}
+
+fn edit_signature(signature: Signature) -> Signature {
+    server_flag(signature)
+        .required("row", SyntaxShape::Int, "Zero-based start row")
+        .required("column", SyntaxShape::Int, "Zero-based start byte column")
+        .named(
+            "end-row",
+            SyntaxShape::Int,
+            "Zero-based exclusive end row",
+            None,
+        )
+        .named(
+            "end-column",
+            SyntaxShape::Int,
+            "Zero-based exclusive end byte column",
+            None,
+        )
+        .named(
+            "buffer",
+            SyntaxShape::Int,
+            "Buffer ID; defaults to the current buffer",
+            Some('b'),
+        )
+        .input_output_type(Type::Any, Type::Record(vec![].into()))
+}
+
+fn text_signature(signature: Signature) -> Signature {
+    server_flag(signature)
+        .named(
+            "buffer",
+            SyntaxShape::Int,
+            "Buffer ID; defaults to the current buffer",
+            Some('b'),
+        )
+        .named("start", SyntaxShape::Int, "First zero-based row", None)
+        .named(
+            "end",
+            SyntaxShape::Int,
+            "Exclusive zero-based row; defaults to the buffer end",
+            None,
+        )
+        .input_output_type(Type::Nothing, Type::Record(vec![].into()))
 }
 
 fn servers(span: Span) -> Value {
@@ -318,6 +384,10 @@ fn connect(engine: &EngineInterface, call: &EvaluatedCall) -> Result<RpcClient, 
 fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
     let span = call.head;
     let mut client = connect(engine, call)?;
+    context_for_client(&mut client, span)
+}
+
+fn context_for_client(client: &mut RpcClient, span: Span) -> Result<Value, LabeledError> {
     let buffer = rpc(client.nvim_get_current_buf(), span)?;
     let window = rpc(client.nvim_get_current_win(), span)?;
     let tab = rpc(client.nvim_get_current_tabpage(), span)?;
@@ -335,8 +405,8 @@ fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, Labe
                 "mode",
                 Value::string(rpc_string_field(&mode, "mode")?, span),
             ),
-            ("buffer", buffer_record(&mut client, &buffer, span)?),
-            ("window", window_record(&mut client, &window, span)?),
+            ("buffer", buffer_record(client, &buffer, span)?),
+            ("window", window_record(client, &window, span)?),
             ("tab", handle_summary(&tab, &server, span)?),
             ("cursor", cursor_record(&cursor, span)?),
             (
@@ -346,6 +416,45 @@ fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, Labe
         ],
         span,
     ))
+}
+
+fn cursor(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    let span = call.head;
+    let mut client = connect(engine, call)?;
+    current_cursor(&mut client, span)
+}
+
+fn current_cursor(client: &mut RpcClient, span: Span) -> Result<Value, LabeledError> {
+    let window = rpc(client.nvim_get_current_win(), span)?;
+    let position = rpc(client.nvim_win_get_cursor([window]), span)?;
+    cursor_record(&position, span)
+}
+
+fn cursor_set(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    let span = call.head;
+    let row = non_negative(
+        call.req::<i64>(0).map_err(LabeledError::from)?,
+        "cursor row",
+        span,
+    )?;
+    let column = non_negative(
+        call.req::<i64>(1).map_err(LabeledError::from)?,
+        "cursor column",
+        span,
+    )?;
+    let nvim_row = row
+        .checked_add(1)
+        .ok_or_else(|| labeled("cursor row is too large", span))?;
+    let mut client = connect(engine, call)?;
+    let window = rpc(client.nvim_get_current_win(), span)?;
+    rpc(
+        client.nvim_win_set_cursor([
+            window,
+            RpcValue::Array(vec![RpcValue::from(nvim_row), RpcValue::from(column)]),
+        ]),
+        span,
+    )?;
+    current_cursor(&mut client, span)
 }
 
 fn buffers(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
@@ -358,6 +467,22 @@ fn buffers(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, Labe
         .map(|buffer| buffer_record(&mut client, buffer, span))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Value::list(rows, span))
+}
+
+fn buffer_use(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    let span = call.head;
+    let id = non_negative(
+        call.req::<i64>(0).map_err(LabeledError::from)?,
+        "buffer ID",
+        span,
+    )?;
+    let id = u64::try_from(id).map_err(|error| labeled(error, span))?;
+    let buffer = NvimHandle::new(HandleKind::Buffer, id)
+        .to_rpc_value()
+        .map_err(|error| labeled(error, span))?;
+    let mut client = connect(engine, call)?;
+    rpc(client.nvim_set_current_buf([buffer.clone()]), span)?;
+    buffer_record(&mut client, &buffer, span)
 }
 
 fn text(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
@@ -475,6 +600,66 @@ fn open(
         opened.push(buffer_record(&mut client, &buffer, span)?);
     }
     Ok(Value::list(opened, span))
+}
+
+fn edit(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+    input: PipelineData,
+) -> Result<Value, LabeledError> {
+    let span = call.head;
+    let start_row = non_negative(
+        call.req::<i64>(0).map_err(LabeledError::from)?,
+        "start row",
+        span,
+    )?;
+    let start_column = non_negative(
+        call.req::<i64>(1).map_err(LabeledError::from)?,
+        "start column",
+        span,
+    )?;
+    let end_row = non_negative(
+        call.get_flag::<i64>("end-row")
+            .map_err(LabeledError::from)?
+            .unwrap_or(start_row),
+        "end row",
+        span,
+    )?;
+    let end_column = non_negative(
+        call.get_flag::<i64>("end-column")
+            .map_err(LabeledError::from)?
+            .unwrap_or(start_column),
+        "end column",
+        span,
+    )?;
+    if (end_row, end_column) < (start_row, start_column) {
+        return Err(labeled("edit end must not precede its start", span));
+    }
+    let value = input.into_value(span).map_err(LabeledError::from)?;
+    let lines = value_to_lines(&value, None, span)?;
+    let inserted_lines = i64::try_from(lines.len()).map_err(|error| labeled(error, span))?;
+    let mut client = connect(engine, call)?;
+    let buffer = selected_buffer(&mut client, call, span)?;
+    rpc(
+        client.nvim_buf_set_text([
+            buffer.clone(),
+            RpcValue::from(start_row),
+            RpcValue::from(start_column),
+            RpcValue::from(end_row),
+            RpcValue::from(end_column),
+            RpcValue::Array(lines.into_iter().map(RpcValue::from).collect()),
+        ]),
+        span,
+    )?;
+    Ok(record(
+        [
+            ("buffer", buffer_record(&mut client, &buffer, span)?),
+            ("start", position_record(start_row, start_column, span)),
+            ("end", position_record(end_row, end_column, span)),
+            ("inserted_lines", Value::int(inserted_lines, span)),
+        ],
+        span,
+    ))
 }
 
 fn replace(
@@ -658,6 +843,14 @@ fn scratch(
     buffer_record(&mut client, &buffer, span)
 }
 
+fn command(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    let span = call.head;
+    let command = call.req::<String>(0).map_err(LabeledError::from)?;
+    let mut client = connect(engine, call)?;
+    rpc(client.nvim_command([RpcValue::from(command)]), span)?;
+    context_for_client(&mut client, span)
+}
+
 fn raw_call(
     engine: &EngineInterface,
     call: &EvaluatedCall,
@@ -823,13 +1016,24 @@ fn cursor_record(cursor: &RpcValue, span: Span) -> Result<Value, LabeledError> {
         .get(1)
         .and_then(RpcValue::as_i64)
         .ok_or_else(|| labeled("cursor column is not an integer", span))?;
-    Ok(record(
+    Ok(position_record(row.saturating_sub(1), column, span))
+}
+
+fn position_record(row: i64, column: i64, span: Span) -> Value {
+    record(
         [
-            ("row", Value::int(row.saturating_sub(1), span)),
+            ("row", Value::int(row, span)),
             ("column", Value::int(column, span)),
         ],
         span,
-    ))
+    )
+}
+
+fn non_negative(value: i64, name: &str, span: Span) -> Result<i64, LabeledError> {
+    if value < 0 {
+        return Err(labeled(format!("{name} must be zero or greater"), span));
+    }
+    Ok(value)
 }
 
 fn selected_buffer(

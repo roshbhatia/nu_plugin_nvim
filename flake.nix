@@ -56,6 +56,8 @@
             cargoTestFlags = [ "--workspace" ];
             postCheck = ''
               cargo run -p nuvim-codegen -- --check
+              NUVIM_TEST_PLUGIN="$(${pkgs.findutils}/bin/find target -type f -name nu_plugin_nuvim -perm -111 | ${pkgs.coreutils}/bin/head -n 1)" \
+                ./hack/test-agent-control.sh
             '';
             meta = {
               description = "Treat Neovim as a Nushell structured-data source and sink over RPC";

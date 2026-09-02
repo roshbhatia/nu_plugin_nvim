@@ -73,16 +73,21 @@ The initial command surface is:
 ```text
 nuvim context
 nuvim servers
+nuvim cursor
+nuvim cursor set
 nuvim buffers
+nuvim buffer use
 nuvim text
 nuvim selection
 nuvim open
+nuvim edit
 nuvim replace
 nuvim diagnostics
 nuvim quickfix get
 nuvim quickfix set
 nuvim quickfix open
 nuvim scratch
+nuvim command
 nuvim call
 nuvim lua
 ```
@@ -156,9 +161,9 @@ source span and value type.
 `nuvim context` combines current buffer, window, tab, cursor, mode, and working
 directory calls. `nuvim buffers` returns one record per listed buffer. `nuvim
 text` returns buffer identity, the selected range, `lines`, and joined `text`.
-The remaining commands expose selection, file opening, replacement, diagnostics,
-quickfix, scratch buffers, raw calls, and Lua evaluation through the same RPC
-client.
+Cursor, buffer selection, range edits, and Ex commands form the stable control
+surface. Selection, file opening, replacement, diagnostics, quickfix, scratch
+buffers, raw calls, and Lua evaluation use the same RPC client.
 
 ### Future event streams
 
@@ -174,7 +179,7 @@ and delete temporary autocmds.
 - Quickfix positions are checked by zero-to-one-based conversion tests in both directions.
 - Server discovery is checked with overrides, `$NVIM`, missing values, Unix sockets, and TCP addresses.
 - Transport is checked against headless Neovim by creating, changing, and reading a buffer.
-- Command behavior is checked by running Nushell examples against a headless server.
+- Command behavior is checked through the Nushell plugin against a headless server. The test creates a scratch buffer, moves the cursor, edits a range, opens a file, switches buffers, and runs an Ex command.
 - Reverse bridge removal is checked by the absence of `nvim-oxi`, `nvim-nu`, and `require("nu")` from package outputs and source references.
 - Nix integration is checked by `nix flake check`, which builds the package and runs the workspace tests.
 

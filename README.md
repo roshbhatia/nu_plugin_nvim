@@ -56,16 +56,21 @@ The version 0.1 surface is:
 nuvim
 nuvim servers
 nuvim context
+nuvim cursor
+nuvim cursor set <row> <column>
 nuvim buffers
+nuvim buffer use <id>
 nuvim text [--buffer <id>] [--start <row>] [--end <row>]
 nuvim selection
 nuvim open [paths...]
+nuvim edit <row> <column> [--end-row <row>] [--end-column <column>] [--buffer <id>]
 nuvim replace [--selection] [--buffer <id>]
 nuvim diagnostics
 nuvim quickfix get
 nuvim quickfix set [--title <text>]
 nuvim quickfix open [--height <rows>]
 nuvim scratch [--name <name>] [--filetype <name>]
+nuvim command <ex-command>
 nuvim call <method> [arguments...]
 nuvim lua <code> [arguments...]
 ```
@@ -126,6 +131,24 @@ nuvim selection
 | nuvim replace --selection
 ```
 
+Move the cursor and insert text at its position:
+
+```nu
+nuvim cursor set 12 4
+"TODO: " | nuvim edit 12 4
+nuvim text --start 12 --end 13
+```
+
+Switch to a listed buffer:
+
+```nu
+nuvim buffers
+| where path =~ "README.md$"
+| first
+| get id
+| nuvim buffer use
+```
+
 Send ripgrep matches to quickfix:
 
 ```nu
@@ -152,6 +175,15 @@ Raw escape hatches preserve structured values:
 nuvim call nvim_get_current_buf
 nuvim lua 'return vim.bo.filetype'
 ```
+
+## Agent control
+
+Nuvim exposes a small observe, navigate, edit, and operate contract for agents.
+Agents should select a server explicitly, inspect state before a mutation, use
+range edits instead of simulated keys, and verify the resulting buffer state.
+
+See [the agent control contract](docs/agent-control.md) and its
+[runnable recipe](recipes/agent-control) for the exact workflow.
 
 ## Quickfix schema
 
