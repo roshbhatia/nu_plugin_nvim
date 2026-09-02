@@ -2,6 +2,8 @@
 
 ![Nuvim structured buffer data](docs/nuvim.png)
 
+![Nuvim animated structured editor workflows](docs/nuvim.gif)
+
 Nuvim makes Neovim state available as native Nushell data.
 It also provides a small Rust Neovim module that sends values through Nushell pipelines.
 
@@ -11,7 +13,8 @@ Columns are UTF-8 byte offsets, which matches the Neovim API.
 ## Architecture
 
 The Nushell plugin connects to an existing Neovim server through MessagePack-RPC.
-It discovers the parent editor through `$NVIM`, or uses a command-specific `--server` override.
+It uses a command-specific `--server` override first, then `$NVIM`, then Neovim's standard runtime socket directory.
+One discovered session is selected automatically. `nuvim` lists live sessions when more than one editor is running.
 This side cannot use `nvim-oxi` because that crate needs Neovim symbols inside the editor process.
 
 The `nvim-nu` crate uses `nvim-oxi` inside Neovim.
@@ -44,6 +47,54 @@ vim.opt.runtimepath:prepend("/path/to/result/share/nvim/site")
 local nu = require("nu")
 ```
 
+The companion module is optional. Nuvim can discover and control every normal Neovim process without an editor-side hook.
+
+`vim.pack` can manage the source checkout while Nix builds the native module:
+
+```lua
+local name = "nu_plugin_nvim"
+
+local function build(path)
+  local output = path .. "/.nuvim-plugin"
+  local result = vim.system({ "nix", "build", path .. "#nvim-plugin", "--out-link", output }):wait()
+  assert(result.code == 0, result.stderr)
+  vim.opt.runtimepath:prepend(output)
+end
+
+vim.api.nvim_create_autocmd("PackChanged", {
+  callback = function(event)
+    if event.data.spec.name == name and event.data.kind ~= "delete" then
+      build(event.data.path)
+    end
+  end,
+})
+
+vim.pack.add({ { src = "https://github.com/roshbhatia/nu_plugin_nvim", name = name } })
+local plugin = vim.pack.get({ name })[1]
+local output = plugin.path .. "/.nuvim-plugin"
+if vim.uv.fs_stat(output) then
+  vim.opt.runtimepath:prepend(output)
+else
+  build(plugin.path)
+end
+```
+
+The equivalent `lazy.nvim` entry is:
+
+```lua
+{
+  "roshbhatia/nu_plugin_nvim",
+  build = function(plugin)
+    local output = plugin.dir .. "/.nuvim-plugin"
+    local result = vim.system({ "nix", "build", plugin.dir .. "#nvim-plugin", "--out-link", output }):wait()
+    assert(result.code == 0, result.stderr)
+  end,
+  config = function(plugin)
+    vim.opt.runtimepath:prepend(plugin.dir .. "/.nuvim-plugin")
+  end,
+}
+```
+
 Nix consumers can use `packages.<system>.default`, `packages.<system>.nu-plugin`, or `packages.<system>.nvim-plugin`.
 The default package contains both sides.
 The Nix-built Neovim module uses the Nushell binary from its package closure.
@@ -62,6 +113,8 @@ cargo test --workspace
 The version 0.1 surface is:
 
 ```text
+nuvim
+nuvim servers
 nuvim context
 nuvim buffers
 nuvim text [--buffer <id>] [--start <row>] [--end <row>]
@@ -77,8 +130,12 @@ nuvim call <method> [arguments...]
 nuvim lua <code> [arguments...]
 ```
 
-Every command accepts `--server <socket-or-host:port>`.
-Without that flag, Nuvim uses `$NVIM`.
+Every editor command accepts `--server <socket-or-host:port>`.
+Without that flag, Nuvim uses `$NVIM` or automatically selects the only discovered session.
+Run `nuvim` to inspect or choose between multiple sessions.
+
+Neovim has no built-in human session name.
+Nuvim labels each session with its current buffer, working directory, process ID, mode, and socket address.
 
 Buffer, window, and tab records include IDs and server identity.
 Raw handle results use `{type: "nvim-handle", kind, id, server}` records instead of bare integers.
@@ -225,3 +282,4 @@ Signal cleanup must detach buffers and delete temporary autocmds.
 - [`nu-plugin 0.115.1`](https://docs.rs/nu-plugin/0.115.1/nu_plugin/)
 - [Neovim API and MessagePack-RPC](https://neovim.io/doc/user/api/)
 - [`nvim-oxi 0.6.0`](https://docs.rs/nvim-oxi/0.6.0/nvim_oxi/)
+- [`nvim-rs 0.9.2`](https://docs.rs/nvim-rs/0.9.2/nvim_rs/)

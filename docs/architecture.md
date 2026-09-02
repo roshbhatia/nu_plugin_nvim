@@ -35,7 +35,7 @@ The bridge needs pipeline sources and sinks without hiding Neovim state inside f
 ### Goals
 
 - `nuvim buffers | where modified` MUST operate on Nushell records.
-- Commands MUST discover `$NVIM` and accept `--server` as an override.
+- Commands MUST accept `--server`, prefer `$NVIM`, and discover Neovim's standard runtime sockets when both are absent.
 - Rows and columns MUST be zero-based at the public Nuvim boundary.
 - RPC, conversion, and connection failures MUST return contextual errors without panics.
 - Nix MUST define developer tooling and build outputs.
@@ -54,7 +54,7 @@ The workspace contains three Rust crates.
 - `nu-plugin-nuvim` owns Nushell signatures, pipeline handling, labeled errors, and Nushell value conversion.
 - `nvim-nu` owns the `nvim-oxi` module returned by `require("nu")`.
 
-The repository also contains `plugin/nu.lua`, examples, tests, a flake, and this design note.
+The repository also contains `lua/nu.lua`, examples, tests, a flake, and this design note.
 
 ### User workflows
 
@@ -66,6 +66,7 @@ The initial command surface is:
 
 ```text
 nuvim context
+nuvim servers
 nuvim buffers
 nuvim text
 nuvim selection
@@ -82,6 +83,10 @@ nuvim lua
 
 Each subcommand accepts `--server` because Nushell does not inherit parent command flags.
 The name `nuvim` prevents collision with the existing `nvim` executable.
+
+Neovim creates a default RPC socket during startup.
+Nuvim scans the path documented by `serverlist()` and `serverstart()`, filters stale sockets by opening a bounded RPC connection, and orders live sessions by socket modification time.
+One live session is selected automatically. Multiple sessions require an explicit shell selection or `--server`.
 
 ### Notes, constraints, caveats
 
@@ -188,6 +193,7 @@ The existing RPC decoder and `PipelineData` command boundary support this withou
 - MessagePack conversion is correct when unit tests round-trip every direct and tagged value.
 - Quickfix positions are correct when unit tests prove zero-to-one-based conversion in both directions.
 - Server discovery is correct when tests cover override, `$NVIM`, missing values, Unix sockets, and TCP addresses.
+- Runtime discovery is correct when two headless Neovim processes return distinct labels, process IDs, paths, and sockets.
 - Transport is correct when a headless Neovim test creates, changes, and reads a buffer through `RpcClient`.
 - Command behavior is correct when Nushell examples run against a headless server.
 - The companion module is loadable when headless Neovim requires `nu` from the Nix package.
@@ -204,6 +210,7 @@ The synchronous companion API can block Neovim while a Nushell process runs.
 
 - Run `nvim --server ... --remote-expr` for every command. This loses typed MessagePack values and notifications.
 - Use `nvim-oxi` in the Nushell plugin. It requires Neovim process symbols and cannot attach to an existing server.
+- Use `nvim-rs` in the Nushell plugin. It provides a maintained asynchronous RPC client, but it adds an async runtime and LGPL-3.0 code to a synchronous MIT workspace. The current client stays bounded and covered by headless transport tests. Reconsider this when event streams require a long-lived async connection.
 - Generate one Nushell command per Neovim API function. This copies an object API into a pipeline shell and creates unstable surface area.
 - Embed the Nushell engine in Neovim now. This increases binary size and engine-state complexity before the basic data model is proven.
 - Add `CustomValue` handles now. Tagged records keep version 0.1 inspectable and preserve a migration path.

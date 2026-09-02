@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
     Category, LabeledError, PipelineData, Record, Signature, Span, SyntaxShape, Type, Value,
 };
 use nuvim_protocol::{
-    ApiMetadata, HandleKind, NvimHandle, QuickfixItem, RpcClient, discover_server,
+    ApiMetadata, HandleKind, NvimHandle, QuickfixItem, RpcClient, discover_server, discover_servers,
 };
 use rmpv::Value as RpcValue;
 
@@ -15,6 +16,7 @@ use crate::value::{msgpack_to_nu, nu_to_msgpack};
 #[derive(Clone, Copy)]
 enum CommandKind {
     Root,
+    Servers,
     Context,
     Buffers,
     Text,
@@ -35,10 +37,11 @@ struct NuvimCommand(CommandKind);
 pub fn all() -> Vec<Box<dyn PluginCommand<Plugin = NuvimPlugin>>> {
     use CommandKind::{
         Buffers, Call, Context, Diagnostics, Lua, Open, QuickfixGet, QuickfixOpen, QuickfixSet,
-        Replace, Root, Scratch, Selection, Text,
+        Replace, Root, Scratch, Selection, Servers, Text,
     };
     [
         Root,
+        Servers,
         Context,
         Buffers,
         Text,
@@ -64,6 +67,7 @@ impl PluginCommand for NuvimCommand {
     fn name(&self) -> &str {
         match self.0 {
             CommandKind::Root => "nuvim",
+            CommandKind::Servers => "nuvim servers",
             CommandKind::Context => "nuvim context",
             CommandKind::Buffers => "nuvim buffers",
             CommandKind::Text => "nuvim text",
@@ -83,9 +87,10 @@ impl PluginCommand for NuvimCommand {
     fn signature(&self) -> Signature {
         let signature = Signature::build(self.name()).category(Category::Plugin);
         match self.0 {
-            CommandKind::Root => {
-                signature.input_output_type(Type::Nothing, Type::List(Type::String.into()))
-            }
+            CommandKind::Root | CommandKind::Servers => signature.input_output_type(
+                Type::Nothing,
+                Type::List(Type::Record(vec![].into()).into()),
+            ),
             CommandKind::Context | CommandKind::Selection => {
                 server_flag(signature).input_output_type(Type::Nothing, Type::Record(vec![].into()))
             }
@@ -177,7 +182,7 @@ impl PluginCommand for NuvimCommand {
 
     fn description(&self) -> &str {
         match self.0 {
-            CommandKind::Root => "Use Neovim as a structured Nushell data source and sink",
+            CommandKind::Root | CommandKind::Servers => "List running Neovim sessions",
             CommandKind::Context => "Get current Neovim context as a record",
             CommandKind::Buffers => "List Neovim buffers as records",
             CommandKind::Text => "Read buffer text and its zero-based row range",
@@ -206,7 +211,7 @@ impl PluginCommand for NuvimCommand {
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
         let output = match self.0 {
-            CommandKind::Root => root(call.head),
+            CommandKind::Root | CommandKind::Servers => servers(call.head),
             CommandKind::Context => context(call)?,
             CommandKind::Buffers => buffers(call)?,
             CommandKind::Text => text(call)?,
@@ -234,28 +239,63 @@ fn server_flag(signature: Signature) -> Signature {
     )
 }
 
-fn root(span: Span) -> Value {
-    Value::list(
-        [
-            "context",
-            "buffers",
-            "text",
-            "selection",
-            "open",
-            "replace",
-            "diagnostics",
-            "quickfix get",
-            "quickfix set",
-            "quickfix open",
-            "scratch",
-            "call",
-            "lua",
-        ]
+fn servers(span: Span) -> Value {
+    let rows = discover_servers()
         .into_iter()
-        .map(|name| Value::string(name, span))
-        .collect(),
+        .filter_map(|address| server_record(&address, span).ok())
+        .collect();
+    Value::list(rows, span)
+}
+
+fn server_record(
+    address: &nuvim_protocol::ServerAddress,
+    span: Span,
+) -> Result<Value, LabeledError> {
+    let mut client = RpcClient::connect_with_timeout(address, Duration::from_millis(250))
+        .map_err(|error| labeled(error, span))?;
+    let buffer = rpc(&mut client, "nvim_get_current_buf", vec![], span)?;
+    let path = rpc(&mut client, "nvim_buf_get_name", vec![buffer], span)?;
+    let cwd = rpc(
+        &mut client,
+        "nvim_call_function",
+        vec![RpcValue::from("getcwd"), RpcValue::Array(vec![])],
         span,
-    )
+    )?;
+    let pid = rpc(
+        &mut client,
+        "nvim_call_function",
+        vec![RpcValue::from("getpid"), RpcValue::Array(vec![])],
+        span,
+    )?;
+    let mode = rpc(&mut client, "nvim_get_mode", vec![], span)?;
+    let path = rpc_string(&path, "buffer name")?;
+    let cwd = rpc_string(&cwd, "working directory")?;
+    let label = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            Path::new(cwd)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "Neovim".to_owned());
+    Ok(record(
+        [
+            ("label", Value::string(label, span)),
+            ("server", Value::string(client.server(), span)),
+            ("pid", Value::int(rpc_i64(&pid, "process ID", span)?, span)),
+            ("cwd", Value::string(cwd, span)),
+            ("path", Value::string(path, span)),
+            (
+                "mode",
+                Value::string(rpc_string_field(&mode, "mode")?, span),
+            ),
+        ],
+        span,
+    ))
 }
 
 fn connect(call: &EvaluatedCall) -> Result<RpcClient, LabeledError> {

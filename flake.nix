@@ -56,7 +56,7 @@
             cargoTestFlags = [ "--workspace" ];
             postInstall = ''
               mkdir -p "$out/share/nvim/site/lua"
-              cp plugin/nu.lua "$out/share/nvim/site/lua/nu.lua"
+              cp lua/nu.lua "$out/share/nvim/site/lua/nu.lua"
               nuvim_library="$(find target -type f \( -name libnvim_nu.dylib -o -name libnvim_nu.so \) -print -quit)"
               test -n "$nuvim_library"
               cp "$nuvim_library" "$out/share/nvim/site/lua/nvim_nu.so"
@@ -120,6 +120,7 @@
               pkgs.rust-analyzer
               pkgs.rustc
               pkgs.rustfmt
+              pkgs.vhs
             ];
           };
         }

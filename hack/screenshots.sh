@@ -18,9 +18,11 @@ mkdir -p "$repo_dir/docs"
 package=$(nix build --no-link --print-out-paths)
 server="$fixture/nvim.sock"
 
-nvim --headless --clean --listen "$server" README.md plugin/nu.lua \
+nvim --headless --clean --listen "$server" README.md lua/nu.lua \
   "+filetype on" \
+  "+edit README.md" \
   "+call append(0, '-- demo edit')" \
+  "+lua local ns = vim.api.nvim_create_namespace('nuvim-demo'); vim.diagnostic.set(ns, 0, {{ lnum = 2, col = 0, severity = vim.diagnostic.severity.ERROR, message = 'Introduction needs a concrete example' }, { lnum = 7, col = 0, severity = vim.diagnostic.severity.WARN, message = 'Architecture link should name the RPC boundary' }})" \
   >"$fixture/nvim.log" 2>&1 &
 editor_pid=$!
 
@@ -39,3 +41,10 @@ freeze \
   --padding 24 \
   --margin 16 \
   --window
+
+plugin_dir="$fixture/config/nushell"
+mkdir -p "$plugin_dir"
+printf '$env.config.show_banner = false\n' >"$plugin_dir/config.nu"
+nu --config /dev/null --env-config /dev/null --plugin-config "$plugin_dir/plugin.msgpackz" \
+  -c "plugin add '$package/bin/nu_plugin_nuvim'"
+XDG_CONFIG_HOME="$fixture/config" vhs hack/nuvim.tape --output "$repo_dir/docs/nuvim.gif"
