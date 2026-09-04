@@ -2,9 +2,14 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::SystemTime;
 
 use thiserror::Error;
+
+use crate::RpcClient;
+
+const DISCOVERY_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerAddress {
@@ -62,16 +67,21 @@ pub fn discover_server(
     }
 }
 
-/// Returns live-looking Neovim socket paths in newest-first order.
+/// Returns live Neovim servers in newest-first order.
 #[must_use]
 pub fn discover_servers() -> Vec<ServerAddress> {
     let user = env::var("USER").unwrap_or_default();
     let runtime = env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
     let temporary = env::var_os("TMPDIR").map_or_else(env::temp_dir, PathBuf::from);
-    discover_servers_in(runtime.as_deref(), &temporary, &user)
+    let candidates = discover_server_candidates(runtime.as_deref(), &temporary, &user);
+    live_servers_with(candidates, is_neovim_server)
 }
 
-fn discover_servers_in(runtime: Option<&Path>, temporary: &Path, user: &str) -> Vec<ServerAddress> {
+fn discover_server_candidates(
+    runtime: Option<&Path>,
+    temporary: &Path,
+    user: &str,
+) -> Vec<ServerAddress> {
     let mut roots = Vec::new();
     if let Some(runtime) = runtime {
         roots.push(runtime.to_path_buf());
@@ -90,6 +100,23 @@ fn discover_servers_in(runtime: Option<&Path>, temporary: &Path, user: &str) -> 
         .into_iter()
         .map(|(path, _)| ServerAddress::Unix(path))
         .collect()
+}
+
+fn live_servers_with(
+    candidates: Vec<ServerAddress>,
+    mut probe: impl FnMut(&ServerAddress) -> bool,
+) -> Vec<ServerAddress> {
+    candidates
+        .into_iter()
+        .filter(|server| probe(server))
+        .collect()
+}
+
+fn is_neovim_server(address: &ServerAddress) -> bool {
+    let Ok(mut client) = RpcClient::connect_with_timeout(address, DISCOVERY_TIMEOUT) else {
+        return false;
+    };
+    client.call("nvim_get_api_info", vec![]).is_ok()
 }
 
 fn socket_candidates(root: &Path, depth: usize) -> Vec<(PathBuf, SystemTime)> {
@@ -135,7 +162,10 @@ pub fn discover_server_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerAddress, ServerDiscoveryError, discover_server_with, discover_servers_in};
+    use super::{
+        ServerAddress, ServerDiscoveryError, discover_server_candidates, discover_server_with,
+        live_servers_with,
+    };
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -177,8 +207,23 @@ mod tests {
         let socket = session.join("nvim.42.0");
         let _listener = UnixListener::bind(&socket).expect("socket should bind");
 
-        let servers = discover_servers_in(Some(directory.path()), directory.path(), "user");
+        let servers = discover_server_candidates(Some(directory.path()), directory.path(), "user");
 
         assert_eq!(servers, vec![ServerAddress::Unix(socket)]);
+    }
+
+    #[test]
+    fn stale_runtime_sockets_are_removed_before_selection() {
+        let candidates = vec![
+            ServerAddress::Unix(PathBuf::from("/tmp/nvim.stale.0")),
+            ServerAddress::Unix(PathBuf::from("/tmp/nvim.live.0")),
+        ];
+
+        let servers = live_servers_with(candidates, |address| address.to_string().contains("live"));
+
+        assert_eq!(
+            servers,
+            vec![ServerAddress::Unix(PathBuf::from("/tmp/nvim.live.0"))]
+        );
     }
 }

@@ -9,9 +9,13 @@ require an editor-side plugin.
 List live editors and select one server address:
 
 ```nu
-let editor = (nuvim servers | first)
+let editor = (nuvim)
 let server = $editor.server
 ```
+
+Bare `nuvim` returns the only live editor or opens Nushell's native picker when
+several are running. Automation that must never prompt should use `nuvim
+servers`, apply its own selection rule, and pass `--server` on every command.
 
 Pass `--server $server` on every later command. This keeps an automation bound
 to one editor when another Neovim process starts.
@@ -53,7 +57,7 @@ Insert at a position by omitting the end position:
 Replace an exact range by supplying its exclusive end position:
 
 ```nu
-"replacement" \
+"replacement"
 | nuvim edit 10 2 --end-row 10 --end-column 8 --server $server
 ```
 

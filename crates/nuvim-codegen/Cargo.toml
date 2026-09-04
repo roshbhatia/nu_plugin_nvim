@@ -5,10 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+description = "Generate Nuvim Rust RPC methods from Neovim API metadata"
+keywords.workspace = true
+categories.workspace = true
 publish = false
 
 [dependencies]
+minijinja = "2.24.0"
 rmpv.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

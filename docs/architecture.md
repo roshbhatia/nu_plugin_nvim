@@ -96,9 +96,11 @@ Each subcommand accepts `--server` because Nushell does not inherit parent
 command flags. The name `nuvim` prevents collision with the `nvim` executable.
 
 Nuvim scans the runtime paths used by `serverlist()` and `serverstart()`. It
-filters stale sockets with a bounded RPC connection and orders live sessions by
-socket modification time. One live session is selected automatically. Multiple
-sessions require `--server` or an explicit shell selection.
+filters stale sockets with a bounded `nvim_get_api_info` call and orders live
+sessions by socket modification time. One live session is selected
+automatically. Bare `nuvim` delegates multiple-session selection to Nushell's
+native `input list` command. Automation uses `nuvim servers` and passes an
+explicit `--server` value.
 
 ### Notes, constraints, caveats
 
@@ -154,7 +156,9 @@ type IDs map to tagged handles. Unknown extensions map to `{type:
 
 The reverse value conversion recognizes both tagged forms because Nushell sends
 arguments into Neovim RPC. It MUST reject unsupported Nushell values with the
-source span and value type.
+source span and value type. It MUST also compare each tagged handle's server to
+the active RPC target, recursively through lists and maps, before sending any
+request.
 
 ### Structured commands
 

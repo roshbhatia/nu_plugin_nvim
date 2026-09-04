@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use nu_plugin::{EngineInterface, EvaluatedCall, PluginCommand};
 use nu_protocol::{
-    Category, LabeledError, PipelineData, Record, Signature, Span, SyntaxShape, Type, Value,
+    Category, IntoSpanned, LabeledError, PipelineData, Record, Signature, Span, SyntaxShape, Type,
+    Value,
 };
 use nuvim_protocol::{
     HandleKind, NvimHandle, QuickfixItem, RpcClient, RpcError, ServerAddress, api_function,
@@ -104,11 +105,14 @@ impl PluginCommand for NuvimCommand {
     fn signature(&self) -> Signature {
         let signature = Signature::build(self.name()).category(Category::Plugin);
         match self.0 {
-            CommandKind::Root | CommandKind::Servers => signature.input_output_type(
+            CommandKind::Servers => signature.input_output_type(
                 Type::Nothing,
                 Type::List(Type::Record(vec![].into()).into()),
             ),
-            CommandKind::Context | CommandKind::Cursor | CommandKind::Selection => {
+            CommandKind::Root
+            | CommandKind::Context
+            | CommandKind::Cursor
+            | CommandKind::Selection => {
                 server_flag(signature).input_output_type(Type::Nothing, Type::Record(vec![].into()))
             }
             CommandKind::Buffers | CommandKind::Diagnostics | CommandKind::QuickfixGet => {
@@ -196,7 +200,8 @@ impl PluginCommand for NuvimCommand {
 
     fn description(&self) -> &str {
         match self.0 {
-            CommandKind::Root | CommandKind::Servers => "List running Neovim sessions",
+            CommandKind::Root => "Select a running Neovim session",
+            CommandKind::Servers => "List running Neovim sessions",
             CommandKind::Context => "Get current Neovim context as a record",
             CommandKind::Cursor => "Get the current zero-based cursor position",
             CommandKind::CursorSet => "Move the cursor to a zero-based position",
@@ -230,7 +235,8 @@ impl PluginCommand for NuvimCommand {
         input: PipelineData,
     ) -> Result<PipelineData, LabeledError> {
         let output = match self.0 {
-            CommandKind::Root | CommandKind::Servers => servers(call.head),
+            CommandKind::Root => root(engine, call)?,
+            CommandKind::Servers => servers(call.head),
             CommandKind::Context => context(engine, call)?,
             CommandKind::Cursor => cursor(engine, call)?,
             CommandKind::CursorSet => cursor_set(engine, call)?,
@@ -314,6 +320,55 @@ fn servers(span: Span) -> Value {
     Value::list(rows, span)
 }
 
+fn root(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
+    let span = call.head;
+    if let Some(address) = requested_server(engine, call)? {
+        return server_record(&address, span);
+    }
+    let rows = discover_servers()
+        .into_iter()
+        .filter_map(|address| server_record(&address, span).ok())
+        .collect::<Vec<_>>();
+    match rows.as_slice() {
+        [] => Err(labeled(
+            "no live Neovim server found; start Neovim with --listen or set $NVIM",
+            span,
+        )),
+        [row] => Ok(row.clone()),
+        _ => pick_server(engine, rows, span),
+    }
+}
+
+fn pick_server(
+    engine: &EngineInterface,
+    rows: Vec<Value>,
+    span: Span,
+) -> Result<Value, LabeledError> {
+    let declaration = engine
+        .find_decl("input list")
+        .map_err(LabeledError::from)?
+        .ok_or_else(|| labeled("Nushell command `input list` is unavailable", span))?;
+    let picker_call = EvaluatedCall::new(span)
+        .with_positional(Value::string("Select a Neovim session", span))
+        .with_flag("fuzzy".into_spanned(span))
+        .with_flag("per-column".into_spanned(span));
+    let selected = engine
+        .call_decl(
+            declaration,
+            picker_call,
+            PipelineData::value(Value::list(rows, span), None),
+            false,
+            false,
+        )
+        .map_err(LabeledError::from)?
+        .into_value(span)
+        .map_err(LabeledError::from)?;
+    match selected {
+        Value::Nothing { .. } => Err(labeled("Neovim session selection was cancelled", span)),
+        selected => Ok(selected),
+    }
+}
+
 fn server_record(
     address: &nuvim_protocol::ServerAddress,
     span: Span,
@@ -362,6 +417,16 @@ fn server_record(
 }
 
 fn connect(engine: &EngineInterface, call: &EvaluatedCall) -> Result<RpcClient, LabeledError> {
+    let address = requested_server(engine, call)?
+        .map_or_else(|| discover_server(None), Ok)
+        .map_err(|error| labeled(error, call.head))?;
+    RpcClient::connect(&address).map_err(|error| labeled(error, call.head))
+}
+
+fn requested_server(
+    engine: &EngineInterface,
+    call: &EvaluatedCall,
+) -> Result<Option<ServerAddress>, LabeledError> {
     let override_value = call
         .get_flag::<String>("server")
         .map_err(LabeledError::from)?;
@@ -373,12 +438,11 @@ fn connect(engine: &EngineInterface, call: &EvaluatedCall) -> Result<RpcClient, 
     } else {
         None
     };
-    let address = match override_value.or(engine_value) {
-        Some(value) => ServerAddress::parse(value),
-        None => discover_server(None),
-    }
-    .map_err(|error| labeled(error, call.head))?;
-    RpcClient::connect(&address).map_err(|error| labeled(error, call.head))
+    override_value
+        .or(engine_value)
+        .map(ServerAddress::parse)
+        .transpose()
+        .map_err(|error| labeled(error, call.head))
 }
 
 fn context(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
@@ -863,11 +927,6 @@ fn raw_call(
         &mut arguments,
         input.into_value(span).map_err(LabeledError::from)?,
     );
-    let arguments = arguments
-        .iter()
-        .map(nu_to_msgpack)
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut client = connect(engine, call)?;
     let function = api_function(&method).ok_or_else(|| {
         labeled(
             format!("generated Neovim API metadata does not contain method {method}"),
@@ -884,6 +943,11 @@ fn raw_call(
             span,
         ));
     }
+    let mut client = connect(engine, call)?;
+    let arguments = arguments
+        .iter()
+        .map(|value| nu_to_msgpack(value, client.server()))
+        .collect::<Result<Vec<_>, _>>()?;
     let result = rpc(client.call(&method, arguments), span)?;
     msgpack_to_nu(&result, client.server(), span)
 }
@@ -900,11 +964,11 @@ fn lua(
         &mut arguments,
         input.into_value(span).map_err(LabeledError::from)?,
     );
+    let mut client = connect(engine, call)?;
     let arguments = arguments
         .iter()
-        .map(nu_to_msgpack)
+        .map(|value| nu_to_msgpack(value, client.server()))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut client = connect(engine, call)?;
     let result = rpc(
         client.nvim_exec_lua([RpcValue::from(code), RpcValue::Array(arguments)]),
         span,

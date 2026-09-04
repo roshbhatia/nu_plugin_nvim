@@ -12,6 +12,10 @@ edition = "2024"
 rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/roshbhatia/nu_plugin_nvim"
+homepage = "https://github.com/roshbhatia/nu_plugin_nvim"
+description = "Control Neovim as native Nushell data over MessagePack-RPC"
+keywords = ["neovim", "nushell", "msgpack", "rpc"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 nu-plugin = "0.115.1"

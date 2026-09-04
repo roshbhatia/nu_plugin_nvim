@@ -284,3 +284,74 @@ pub enum RpcError {
     #[error("Neovim RPC request identifier overflowed")]
     RequestIdOverflow,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use rmpv::Value;
+    use tempfile::tempdir;
+
+    use super::{RpcClient, RpcError};
+    use crate::ServerAddress;
+
+    #[test]
+    fn call_times_out_with_method_and_server_context() {
+        let directory = tempdir().expect("temporary directory should exist");
+        let socket = directory.path().join("timeout.sock");
+        let listener = UnixListener::bind(&socket).expect("test socket should bind");
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("client should connect");
+            thread::sleep(Duration::from_millis(250));
+        });
+        let address = ServerAddress::Unix(socket.clone());
+        let mut client = RpcClient::connect_with_timeout(&address, Duration::from_millis(50))
+            .expect("client should connect");
+        let started = Instant::now();
+
+        let error = client
+            .call("nvim_get_mode", vec![])
+            .expect_err("silent peer should time out");
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(matches!(
+            error,
+            RpcError::Decode {
+                ref method,
+                ref server,
+                ..
+            } if method == "nvim_get_mode" && server == &socket.display().to_string()
+        ));
+        server.join().expect("test server should stop");
+    }
+
+    #[test]
+    fn malformed_reply_is_rejected_without_a_panic() {
+        let directory = tempdir().expect("temporary directory should exist");
+        let socket = directory.path().join("malformed.sock");
+        let listener = UnixListener::bind(&socket).expect("test socket should bind");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            rmpv::decode::read_value(&mut stream).expect("client request should decode");
+            rmpv::encode::write_value(&mut stream, &Value::from("not an RPC array"))
+                .expect("reply should encode");
+            stream.flush().expect("reply should flush");
+        });
+        let address = ServerAddress::Unix(socket);
+        let mut client = RpcClient::connect_with_timeout(&address, Duration::from_secs(1))
+            .expect("client should connect");
+
+        let error = client
+            .call("nvim_get_mode", vec![])
+            .expect_err("malformed reply should fail");
+
+        assert!(matches!(
+            error,
+            RpcError::Malformed(ref detail) if detail.contains("not an array")
+        ));
+        server.join().expect("test server should stop");
+    }
+}

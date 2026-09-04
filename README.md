@@ -13,32 +13,50 @@ Columns are UTF-8 byte offsets, which matches the Neovim API.
 
 The Nushell plugin connects to an existing Neovim server through MessagePack-RPC.
 It uses a command-specific `--server` override first, then `$NVIM`, then Neovim's standard runtime socket directory.
-One discovered session is selected automatically. `nuvim` lists live sessions when more than one editor is running.
+Discovery probes each candidate through bounded Neovim RPC, so stale socket files never enter selection.
+One live session is selected automatically. Bare `nuvim` opens Nushell's native picker when more than one editor is running.
 This side cannot use `nvim-oxi` because that crate needs Neovim symbols inside the editor process.
 
 The shared `nuvim-protocol` crate owns RPC framing, handle types, server discovery, generated API methods, and quickfix conversion.
 `nuvim-codegen` reads `nvim --api-info` and generates the Rust client and API metadata used by the Nushell plugin.
 See [the architecture note](docs/architecture.md) for the protocol and future session design.
 
-## Nix installation
+## Install with Nix
 
-Build every artifact through the flake:
+Install the runtime plugin from GitHub:
 
 ```sh
-nix build
+nix profile install github:roshbhatia/nu_plugin_nvim#nu-plugin
 ```
 
 Register the Nushell plugin:
 
 ```nu
-plugin add (realpath ./result/bin/nu_plugin_nuvim)
+plugin add (which nu_plugin_nuvim | get path.0)
 ```
 
 Nushell loads the registered `nuvim` commands on its next start.
 Use `plugin use nuvim` to reload them in an existing session.
 
-Nix consumers can use `packages.<system>.default` or `packages.<system>.nu-plugin`.
+Flake consumers can install the plugin without codegen in their runtime closure:
+
+```nix
+{
+  inputs.nuvim.url = "github:roshbhatia/nu_plugin_nvim";
+
+  outputs = { nixpkgs, nuvim, ... }: {
+    # Add this package to Home Manager or the system profile.
+    packages.aarch64-darwin.default =
+      nuvim.packages.aarch64-darwin.nu-plugin;
+  };
+}
+```
+
+`packages.<system>.runtime`, `nu-plugin`, and `default` contain only `nu_plugin_nuvim`.
+`packages.<system>.codegen` is the maintainer-only API generator.
 Neovim needs no editor-side plugin. Start it with `--listen`, set `$NVIM`, or let Nuvim discover its socket.
+
+This flake does not expose a default `nix run` app because a Nushell plugin binary speaks the plugin protocol rather than a user-facing terminal protocol.
 
 Use the declared development shell for every Rust and Neovim dependency:
 
@@ -77,13 +95,21 @@ nuvim lua <code> [arguments...]
 
 Every editor command accepts `--server <socket-or-host:port>`.
 Without that flag, Nuvim uses `$NVIM` or automatically selects the only discovered session.
-Run `nuvim` to inspect or choose between multiple sessions.
+Run bare `nuvim` to choose between multiple live sessions with Nushell's native table picker.
+To bind later commands to that choice, save its server address:
+
+```nu
+$env.NVIM = (nuvim | get server)
+```
+
+Use `nuvim servers` for a non-interactive list.
 
 Neovim has no built-in human session name.
 Nuvim labels each session with its current buffer, working directory, process ID, mode, and socket address.
 
 Buffer, window, and tab records include IDs and server identity.
 Raw handle results use `{type: "nvim-handle", kind, id, server}` records instead of bare integers.
+Nuvim rejects a handle from another server, including handles nested in lists, records, or pipeline arguments.
 Unknown MessagePack extensions and maps with non-string keys use tagged records without data loss.
 
 `nuvim call` validates methods and argument counts against generated API metadata.

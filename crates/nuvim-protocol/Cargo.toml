@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+description = "MessagePack-RPC client and generated Neovim API for Nuvim"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 rmpv.workspace = true

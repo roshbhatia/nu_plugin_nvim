@@ -55,8 +55,9 @@ pub fn msgpack_to_nu(value: &RpcValue, server: &str, span: Span) -> Result<NuVal
 }
 
 /// # Errors
-/// Returns an error when the Nushell value has no explicit `MessagePack` mapping.
-pub fn nu_to_msgpack(value: &NuValue) -> Result<RpcValue, LabeledError> {
+/// Returns an error when the Nushell value has no explicit `MessagePack` mapping
+/// or contains a Neovim handle from another server.
+pub fn nu_to_msgpack(value: &NuValue, expected_server: &str) -> Result<RpcValue, LabeledError> {
     let span = value.span();
     match value {
         NuValue::Nothing { .. } => Ok(RpcValue::Nil),
@@ -67,10 +68,10 @@ pub fn nu_to_msgpack(value: &NuValue) -> Result<RpcValue, LabeledError> {
         NuValue::Binary { val, .. } => Ok(RpcValue::Binary(val.to_vec())),
         NuValue::List { vals, .. } => vals
             .iter()
-            .map(nu_to_msgpack)
+            .map(|value| nu_to_msgpack(value, expected_server))
             .collect::<Result<Vec<_>, _>>()
             .map(RpcValue::Array),
-        NuValue::Record { val, .. } => record_to_msgpack(val, span),
+        NuValue::Record { val, .. } => record_to_msgpack(val, span, expected_server),
         other => Err(conversion_error(
             format!(
                 "Nushell {} values cannot be sent through Neovim RPC",
@@ -157,22 +158,45 @@ fn extension_to_nu(
     ))
 }
 
-fn record_to_msgpack(record: &Record, span: Span) -> Result<RpcValue, LabeledError> {
+fn record_to_msgpack(
+    record: &Record,
+    span: Span,
+    expected_server: &str,
+) -> Result<RpcValue, LabeledError> {
     match string_field(record, "type") {
-        Some("nvim-handle") => handle_record_to_msgpack(record, span),
+        Some("nvim-handle") => handle_record_to_msgpack(record, span, expected_server),
         Some("msgpack-ext") => extension_record_to_msgpack(record, span),
-        Some("msgpack-map") => tagged_map_to_msgpack(record, span),
+        Some("msgpack-map") => tagged_map_to_msgpack(record, span, expected_server),
         Some("msgpack-uint") => unsigned_record_to_msgpack(record, span),
         Some("msgpack-string") => invalid_string_record_to_msgpack(record, span),
         _ => record
             .iter()
-            .map(|(name, value)| Ok((RpcValue::from(name.clone()), nu_to_msgpack(value)?)))
+            .map(|(name, value)| {
+                Ok((
+                    RpcValue::from(name.clone()),
+                    nu_to_msgpack(value, expected_server)?,
+                ))
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(RpcValue::Map),
     }
 }
 
-fn handle_record_to_msgpack(record: &Record, span: Span) -> Result<RpcValue, LabeledError> {
+fn handle_record_to_msgpack(
+    record: &Record,
+    span: Span,
+    expected_server: &str,
+) -> Result<RpcValue, LabeledError> {
+    let handle_server = string_field(record, "server")
+        .ok_or_else(|| conversion_error("Neovim handle record has no server", span))?;
+    if handle_server != expected_server {
+        return Err(conversion_error(
+            format!(
+                "Neovim handle belongs to server {handle_server}, not target server {expected_server}"
+            ),
+            span,
+        ));
+    }
     let kind = match string_field(record, "kind") {
         Some("buffer") => HandleKind::Buffer,
         Some("window") => HandleKind::Window,
@@ -201,7 +225,11 @@ fn extension_record_to_msgpack(record: &Record, span: Span) -> Result<RpcValue, 
     Ok(RpcValue::Ext(tag, data.to_vec()))
 }
 
-fn tagged_map_to_msgpack(record: &Record, span: Span) -> Result<RpcValue, LabeledError> {
+fn tagged_map_to_msgpack(
+    record: &Record,
+    span: Span,
+    expected_server: &str,
+) -> Result<RpcValue, LabeledError> {
     let entries = field(record, "entries")
         .ok_or_else(|| conversion_error("tagged MessagePack map has no entries", span))?
         .as_list()
@@ -219,7 +247,10 @@ fn tagged_map_to_msgpack(record: &Record, span: Span) -> Result<RpcValue, Labele
                 .ok_or_else(|| conversion_error("tagged map entry has no key", span))?;
             let value = field(entry, "value")
                 .ok_or_else(|| conversion_error("tagged map entry has no value", span))?;
-            Ok((nu_to_msgpack(key)?, nu_to_msgpack(value)?))
+            Ok((
+                nu_to_msgpack(key, expected_server)?,
+                nu_to_msgpack(value, expected_server)?,
+            ))
         })
         .collect::<Result<Vec<_>, _>>()
         .map(RpcValue::Map)
@@ -309,6 +340,7 @@ fn conversion_error(message: impl Into<String>, span: Span) -> LabeledError {
 #[cfg(test)]
 mod tests {
     use nu_protocol::{Record, Span, Value as NuValue};
+    use nuvim_protocol::{HandleKind, NvimHandle};
     use rmpv::Value as RpcValue;
 
     use super::{msgpack_to_nu, nu_to_msgpack};
@@ -330,7 +362,10 @@ mod tests {
         for value in values {
             let nu = msgpack_to_nu(&value, SERVER, Span::test_data())
                 .expect("MessagePack should convert");
-            assert_eq!(value, nu_to_msgpack(&nu).expect("Nushell should convert"));
+            assert_eq!(
+                value,
+                nu_to_msgpack(&nu, SERVER).expect("Nushell should convert")
+            );
         }
     }
 
@@ -342,7 +377,7 @@ mod tests {
         assert_eq!(Some("msgpack-map"), string_field(record, "type"));
         assert_eq!(
             value,
-            nu_to_msgpack(&nu).expect("tagged map should round trip")
+            nu_to_msgpack(&nu, SERVER).expect("tagged map should round trip")
         );
     }
 
@@ -355,16 +390,43 @@ mod tests {
         assert_eq!(Some("msgpack-ext"), string_field(record, "type"));
         assert_eq!(
             value,
-            nu_to_msgpack(&nu).expect("extension should round trip")
+            nu_to_msgpack(&nu, SERVER).expect("extension should round trip")
         );
     }
 
     #[test]
     fn unsupported_nushell_values_return_labeled_error() {
         let value = NuValue::filesize(42, Span::test_data());
-        let error = nu_to_msgpack(&value).expect_err("filesize should not convert implicitly");
+        let error =
+            nu_to_msgpack(&value, SERVER).expect_err("filesize should not convert implicitly");
         assert_eq!(Some("nuvim::value_conversion"), error.code.as_deref());
         assert_eq!(1, error.labels.len());
+    }
+
+    #[test]
+    fn nested_handle_from_another_server_is_rejected() {
+        let handle = NvimHandle::new(HandleKind::Buffer, 1)
+            .to_rpc_value()
+            .expect("handle should encode");
+        let handle = msgpack_to_nu(&handle, "/tmp/other.sock", Span::test_data())
+            .expect("handle should convert");
+        let nested = NuValue::record(
+            Record::from_iter([(
+                "payload".into(),
+                NuValue::list(vec![handle], Span::test_data()),
+            )]),
+            Span::test_data(),
+        );
+
+        let error =
+            nu_to_msgpack(&nested, SERVER).expect_err("a cross-server handle should not convert");
+
+        assert!(
+            error
+                .to_string()
+                .contains("belongs to server /tmp/other.sock")
+        );
+        assert!(error.to_string().contains("target server /tmp/nvim.sock"));
     }
 
     fn string_field<'a>(record: &'a Record, name: &str) -> Option<&'a str> {
