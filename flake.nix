@@ -146,7 +146,7 @@
             cp -R ${self} source
             chmod -R u+w source
             cd source
-            ./hack/check-media.sh
+            ${pkgs.bash}/bin/bash ./hack/check-media.sh
             touch "$out"
           '';
           repository =

@@ -5,7 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
 expected=$(cat docs/media.sha256)
-actual=$(./hack/media-fingerprint.sh)
+actual=$("$BASH" ./hack/media-fingerprint.sh)
 if [[ $actual != "$expected" ]]; then
   echo "docs media is stale; run ./hack/screenshots.sh" >&2
   exit 1
