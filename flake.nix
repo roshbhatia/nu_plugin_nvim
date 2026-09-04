@@ -133,9 +133,9 @@
               cargo run -p nuvim-codegen -- --check
               export NUVIM_TEST_PLUGIN
               NUVIM_TEST_PLUGIN="$(${pkgs.findutils}/bin/find target -type f -name nu_plugin_nuvim -perm -111 | ${pkgs.coreutils}/bin/head -n 1)"
-              ./hack/test-agent-control.sh
-              ./hack/test-session-discovery.sh
-              ./hack/check-reverse-bridge.sh
+              ${pkgs.bash}/bin/bash ./hack/test-agent-control.sh
+              ${pkgs.bash}/bin/bash ./hack/test-session-discovery.sh
+              ${pkgs.bash}/bin/bash ./hack/check-reverse-bridge.sh
             '';
           };
         in
