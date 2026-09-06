@@ -5,7 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
 {
-  printf '%s\n' Cargo.lock Cargo.toml README.md
+  printf '%s\n' Cargo.lock Cargo.toml flake.lock flake.nix README.md
   find crates -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -print
   printf '%s\n' \
     hack/nuvim.tape \
