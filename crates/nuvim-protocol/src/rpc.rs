@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use rmpv::Value;
 use thiserror::Error;
@@ -43,7 +45,11 @@ impl RpcClient {
         let server = address.to_string();
         let stream: Box<dyn ReadWrite> = match address {
             ServerAddress::Unix(path) => {
-                let stream = UnixStream::connect(path).map_err(|source| RpcError::Connect {
+                let path = path.clone();
+                let stream = run_io_with_timeout("Unix socket connection", timeout, move || {
+                    UnixStream::connect(path)
+                })
+                .map_err(|source| RpcError::Connect {
                     server: server.clone(),
                     source,
                 })?;
@@ -62,15 +68,29 @@ impl RpcClient {
                 Box::new(stream)
             }
             ServerAddress::Tcp(address) => {
-                let socket = address
-                    .to_socket_addrs()
-                    .map_err(|source| RpcError::Resolve {
-                        server: server.clone(),
-                        source,
-                    })?
+                let started = Instant::now();
+                let address = address.clone();
+                let sockets = run_io_with_timeout("TCP address resolution", timeout, move || {
+                    address
+                        .to_socket_addrs()
+                        .map(std::iter::Iterator::collect::<Vec<_>>)
+                })
+                .map_err(|source| RpcError::Resolve {
+                    server: server.clone(),
+                    source,
+                })?;
+                let socket = sockets
+                    .into_iter()
                     .next()
                     .ok_or_else(|| RpcError::NoResolvedAddress(server.clone()))?;
-                let stream = TcpStream::connect_timeout(&socket, timeout).map_err(|source| {
+                let remaining =
+                    timeout
+                        .checked_sub(started.elapsed())
+                        .ok_or_else(|| RpcError::Connect {
+                            server: server.clone(),
+                            source: timeout_error("TCP connection", timeout),
+                        })?;
+                let stream = TcpStream::connect_timeout(&socket, remaining).map_err(|source| {
                     RpcError::Connect {
                         server: server.clone(),
                         source,
@@ -111,7 +131,9 @@ impl RpcClient {
         self.next_id = self
             .next_id
             .checked_add(1)
-            .ok_or(RpcError::RequestIdOverflow)?;
+            .ok_or_else(|| RpcError::RequestIdOverflow {
+                server: self.server.clone(),
+            })?;
         let request = Value::Array(vec![
             Value::from(0),
             Value::from(request_id),
@@ -141,7 +163,7 @@ impl RpcClient {
                     server: self.server.clone(),
                     source,
                 })?;
-            match parse_message(&message)? {
+            match parse_message(&message, &self.server)? {
                 Incoming::Response { id, error, result } => {
                     if id != request_id {
                         return Err(RpcError::UnexpectedResponseId {
@@ -179,18 +201,18 @@ enum Incoming {
     Notification(Notification),
 }
 
-fn parse_message(message: &Value) -> Result<Incoming, RpcError> {
+fn parse_message(message: &Value, server: &str) -> Result<Incoming, RpcError> {
     let items = message
         .as_array()
-        .ok_or_else(|| RpcError::Malformed("RPC message is not an array".into()))?;
+        .ok_or_else(|| RpcError::malformed(server, "RPC message is not an array"))?;
     let message_type = items
         .first()
         .and_then(Value::as_u64)
-        .ok_or_else(|| RpcError::Malformed("RPC message has no numeric type".into()))?;
+        .ok_or_else(|| RpcError::malformed(server, "RPC message has no numeric type"))?;
     match message_type {
         1 if items.len() == 4 => Ok(Incoming::Response {
             id: items[1].as_u64().ok_or_else(|| {
-                RpcError::Malformed("RPC response has no numeric request id".into())
+                RpcError::malformed(server, "RPC response has no numeric request id")
             })?,
             error: items[2].clone(),
             result: items[3].clone(),
@@ -198,27 +220,58 @@ fn parse_message(message: &Value) -> Result<Incoming, RpcError> {
         2 if items.len() == 3 => Ok(Incoming::Notification(Notification {
             method: items[1]
                 .as_str()
-                .ok_or_else(|| RpcError::Malformed("RPC notification has no method string".into()))?
+                .ok_or_else(|| {
+                    RpcError::malformed(server, "RPC notification has no method string")
+                })?
                 .into(),
             arguments: items[2]
                 .as_array()
                 .ok_or_else(|| {
-                    RpcError::Malformed("RPC notification arguments are not an array".into())
+                    RpcError::malformed(server, "RPC notification arguments are not an array")
                 })?
                 .clone(),
         })),
-        1 => Err(RpcError::Malformed(format!(
-            "RPC response has {} fields, expected 4",
-            items.len()
-        ))),
-        2 => Err(RpcError::Malformed(format!(
-            "RPC notification has {} fields, expected 3",
-            items.len()
-        ))),
-        other => Err(RpcError::Malformed(format!(
-            "unsupported RPC message type {other}"
-        ))),
+        1 => Err(RpcError::malformed(
+            server,
+            format!("RPC response has {} fields, expected 4", items.len()),
+        )),
+        2 => Err(RpcError::malformed(
+            server,
+            format!("RPC notification has {} fields, expected 3", items.len()),
+        )),
+        other => Err(RpcError::malformed(
+            server,
+            format!("unsupported RPC message type {other}"),
+        )),
     }
+}
+
+fn run_io_with_timeout<T: Send + 'static>(
+    operation: &'static str,
+    timeout: Duration,
+    run: impl FnOnce() -> std::io::Result<T> + Send + 'static,
+) -> std::io::Result<T> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name(format!("nuvim-{}", operation.replace(' ', "-")))
+        .spawn(move || {
+            let _ = sender.send(run());
+        })?;
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => timeout_error(operation, timeout),
+            mpsc::RecvTimeoutError::Disconnected => std::io::Error::other(format!(
+                "{operation} worker stopped without returning a result"
+            )),
+        })?
+}
+
+fn timeout_error(operation: &str, timeout: Duration) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!("{operation} exceeded {timeout:?}"),
+    )
 }
 
 fn format_value(value: &Value) -> String {
@@ -279,10 +332,19 @@ pub enum RpcError {
         expected: u64,
         actual: u64,
     },
-    #[error("malformed Neovim RPC response: {0}")]
-    Malformed(String),
-    #[error("Neovim RPC request identifier overflowed")]
-    RequestIdOverflow,
+    #[error("malformed Neovim RPC response from server {server}: {detail}")]
+    Malformed { server: String, detail: String },
+    #[error("Neovim RPC request identifier overflowed for server {server}")]
+    RequestIdOverflow { server: String },
+}
+
+impl RpcError {
+    fn malformed(server: &str, detail: impl Into<String>) -> Self {
+        Self::Malformed {
+            server: server.to_owned(),
+            detail: detail.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -295,7 +357,7 @@ mod tests {
     use rmpv::Value;
     use tempfile::tempdir;
 
-    use super::{RpcClient, RpcError};
+    use super::{RpcClient, RpcError, run_io_with_timeout};
     use crate::ServerAddress;
 
     #[test]
@@ -350,8 +412,26 @@ mod tests {
 
         assert!(matches!(
             error,
-            RpcError::Malformed(ref detail) if detail.contains("not an array")
+            RpcError::Malformed {
+                ref server,
+                ref detail,
+            } if server == &address.to_string() && detail.contains("not an array")
         ));
         server.join().expect("test server should stop");
+    }
+
+    #[test]
+    fn blocking_connection_work_is_bounded() {
+        let timeout = Duration::from_millis(25);
+        let started = Instant::now();
+
+        let error = run_io_with_timeout("test connection", timeout, || {
+            thread::sleep(Duration::from_millis(250));
+            Ok(())
+        })
+        .expect_err("blocking connection work should time out");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(200));
     }
 }
