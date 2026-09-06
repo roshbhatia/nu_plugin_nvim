@@ -51,19 +51,33 @@ for expected in Nuvim buffers diagnostics README.md; do
     exit 1
   fi
 done
-freeze \
-  --language shell \
-  "$screenshot_output" \
+timeout 30s freeze \
+  --language ansi \
+  - \
   --output "$repo_dir/docs/nuvim.png" \
   --width 1100 \
   --padding 24 \
   --margin 16 \
-  --window
+  --window < "$screenshot_output"
+if [[ ! -s $repo_dir/docs/nuvim.png ]]; then
+  echo "Nuvim screenshot render produced no output" >&2
+  exit 1
+fi
+identify "$repo_dir/docs/nuvim.png" > /dev/null
 
 plugin_dir="$fixture/config/nushell"
 mkdir -p "$plugin_dir"
 printf '\044%s\n' 'env.config.show_banner = false' > "$plugin_dir/config.nu"
 nu --config /dev/null --env-config /dev/null --plugin-config "$plugin_dir/plugin.msgpackz" \
   -c "plugin add '$package/bin/nu_plugin_nuvim'"
-XDG_CONFIG_HOME="$fixture/config" vhs hack/nuvim.tape --output "$repo_dir/docs/nuvim.gif"
+if ! XDG_CONFIG_HOME="$fixture/config" timeout 60s \
+  vhs hack/nuvim.tape --output "$repo_dir/docs/nuvim.gif"; then
+  echo "Nuvim demo capture failed" >&2
+  exit 1
+fi
+if [[ ! -s $repo_dir/docs/nuvim.gif ]]; then
+  echo "Nuvim demo capture produced no output" >&2
+  exit 1
+fi
+identify "$repo_dir/docs/nuvim.gif" > /dev/null
 ./hack/media-fingerprint.sh > "$repo_dir/docs/media.sha256"
