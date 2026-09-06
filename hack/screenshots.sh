@@ -34,9 +34,26 @@ done
 
 export NVIM="$server"
 export NUVIM_SCREENSHOT_REPO="$repo_dir"
+screenshot_output="$fixture/nuvim.ansi"
+if ! timeout 30s nu --no-config-file --no-history \
+  --plugins "$package/bin/nu_plugin_nuvim" \
+  hack/screenshot.nu > "$screenshot_output"; then
+  echo "Nuvim screenshot capture failed" >&2
+  exit 1
+fi
+if [[ ! -s $screenshot_output ]]; then
+  echo "Nuvim screenshot capture produced no output" >&2
+  exit 1
+fi
+for expected in Nuvim buffers diagnostics README.md; do
+  if ! grep -Fq "$expected" "$screenshot_output"; then
+    echo "Nuvim screenshot capture omitted $expected" >&2
+    exit 1
+  fi
+done
 freeze \
   --language shell \
-  --execute "nu --no-config-file --no-history --plugins $package/bin/nu_plugin_nuvim hack/screenshot.nu" \
+  "$screenshot_output" \
   --output "$repo_dir/docs/nuvim.png" \
   --width 1100 \
   --padding 24 \

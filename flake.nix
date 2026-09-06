@@ -182,6 +182,7 @@
               pkgs.clippy
               pkgs.actionlint
               pkgs.charm-freeze
+              pkgs.coreutils
               pkgs.expect
               pkgs.imagemagick
               pkgs.jq
