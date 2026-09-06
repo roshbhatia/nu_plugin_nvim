@@ -49,6 +49,21 @@ if $lua_result.left != 2 or $lua_result.right != 3 or $lua_result.values != ["é
   error make {msg: $"Lua value conversion returned ($lua_result | to nuon)"}
 }
 
+let unicode_selection = (
+  ["café"]
+  | nuvim scratch --server $server --name unicode-selection --filetype text
+)
+nuvim command 'execute "normal! gg0fév\<Esc>"' --server $server | ignore
+let selected = (nuvim selection --server $server)
+if $selected.text != "é" or $selected.start != {row: 0, column: 3} or $selected.end != {row: 0, column: 5} {
+  error make {msg: $"UTF-8 selection returned ($selected | to nuon)"}
+}
+"X" | nuvim replace --selection --server $server | ignore
+let replaced_selection = (nuvim text --buffer $unicode_selection.id --server $server | get lines)
+if $replaced_selection != [cafX] {
+  error make {msg: $"UTF-8 selection replacement returned ($replaced_selection | to nuon)"}
+}
+
 nuvim lua '
   local buffer = ...
   local namespace = vim.api.nvim_create_namespace("nuvim-test")

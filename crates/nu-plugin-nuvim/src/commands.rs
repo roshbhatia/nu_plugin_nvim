@@ -1350,16 +1350,25 @@ fn labeled(error: impl std::fmt::Display, span: Span) -> LabeledError {
 }
 
 const SELECTION_LUA: &str = r#"
+local function charwise_end(row, column)
+  local line = vim.api.nvim_buf_get_lines(0, row, row + 1, true)[1] or ""
+  if column >= #line then return column end
+  local character = vim.str_utfindex(line, column)
+  return vim.str_byteindex(line, character + 1)
+end
+
 local mode = vim.fn.visualmode()
 if mode == "\022" then error("blockwise selections are not supported in Nuvim 0.1") end
 local first = vim.api.nvim_buf_get_mark(0, "<")
 local last = vim.api.nvim_buf_get_mark(0, ">")
 if first[1] == 0 or last[1] == 0 then error("no visual selection is available") end
 local start_row, start_col = first[1] - 1, first[2]
-local end_row, end_col = last[1] - 1, last[2] + 1
+local end_row, end_col = last[1] - 1, last[2]
 if mode == "V" then
   start_col = 0
   end_col = #vim.api.nvim_buf_get_lines(0, end_row, end_row + 1, true)[1]
+else
+  end_col = charwise_end(end_row, end_col)
 end
 local lines = vim.api.nvim_buf_get_text(0, start_row, start_col, end_row, end_col, {})
 return {
@@ -1373,6 +1382,13 @@ return {
 "#;
 
 const REPLACE_SELECTION_LUA: &str = r#"
+local function charwise_end(row, column)
+  local line = vim.api.nvim_buf_get_lines(0, row, row + 1, true)[1] or ""
+  if column >= #line then return column end
+  local character = vim.str_utfindex(line, column)
+  return vim.str_byteindex(line, character + 1)
+end
+
 local replacement = ...
 local mode = vim.fn.visualmode()
 if mode == "\022" then error("blockwise selections are not supported in Nuvim 0.1") end
@@ -1380,10 +1396,11 @@ local first = vim.api.nvim_buf_get_mark(0, "<")
 local last = vim.api.nvim_buf_get_mark(0, ">")
 if first[1] == 0 or last[1] == 0 then error("no visual selection is available") end
 local start_row, start_col = first[1] - 1, first[2]
-local end_row, end_col = last[1] - 1, last[2] + 1
+local end_row, end_col = last[1] - 1, last[2]
 if mode == "V" then
   vim.api.nvim_buf_set_lines(0, start_row, end_row + 1, true, replacement)
 else
+  end_col = charwise_end(end_row, end_col)
   vim.api.nvim_buf_set_text(0, start_row, start_col, end_row, end_col, replacement)
 end
 return true
