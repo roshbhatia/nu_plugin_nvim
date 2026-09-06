@@ -74,3 +74,17 @@ creates or updates the verified GitHub source release.
 
 - **WHEN** release automation receives a mismatched version tag
 - **THEN** it fails before publishing a GitHub release
+
+### Requirement: Automated source updates
+
+Automation MUST update Cargo dependencies and every root or nested flake lock
+on a six-hour schedule or manual dispatch. It MUST regenerate derived sources
+and media before it opens a pull request. It MUST test the exact pull request
+head on Apple Silicon macOS, ARM Linux, and x86-64 Linux before merging that
+same head.
+
+#### Scenario: Dependency update changes generated content
+
+- **WHEN** scheduled automation updates a dependency or flake input
+- **THEN** the pull request includes regenerated clients, hashes, and media
+- **AND** it merges only after the exact head passes all three platform checks
