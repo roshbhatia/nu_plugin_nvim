@@ -54,9 +54,9 @@
             ];
           };
           common = {
-            version = "0.1.0";
+            version = "0.1.1";
             src = runtimeSource;
-            cargoHash = "sha256-ul7ZtwnG50W3C0++MOgA/Rxp2Pl4cagoMIx1YDpYszM=";
+            cargoHash = "sha256-2VtvEXowW+7T5YiyyEfy1sR/n6nwS+2ilkPER0ra3tk=";
           };
           runtime = pkgs.rustPlatform.buildRustPackage (
             common
@@ -112,9 +112,9 @@
           pkgs = nixpkgs.legacyPackages.${system};
           testedRuntime = pkgs.rustPlatform.buildRustPackage {
             pname = "nu-plugin-nuvim-checks";
-            version = "0.1.0";
+            version = "0.1.1";
             src = self;
-            cargoHash = "sha256-ul7ZtwnG50W3C0++MOgA/Rxp2Pl4cagoMIx1YDpYszM=";
+            cargoHash = "sha256-2VtvEXowW+7T5YiyyEfy1sR/n6nwS+2ilkPER0ra3tk=";
             cargoBuildFlags = [
               "-p"
               "nu-plugin-nuvim"
