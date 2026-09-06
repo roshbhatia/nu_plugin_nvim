@@ -35,6 +35,7 @@ done
 export NVIM="$server"
 export NUVIM_SCREENSHOT_REPO="$repo_dir"
 freeze \
+  --language shell \
   --execute "nu --no-config-file --no-history --plugins $package/bin/nu_plugin_nuvim hack/screenshot.nu" \
   --output "$repo_dir/docs/nuvim.png" \
   --width 1100 \
