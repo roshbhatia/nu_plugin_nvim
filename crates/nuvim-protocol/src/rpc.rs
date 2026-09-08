@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::thread;
@@ -13,8 +13,29 @@ use crate::ServerAddress;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
-trait ReadWrite: Read + Write + Send {}
-impl<T: Read + Write + Send> ReadWrite for T {}
+trait ReadWrite: Read + Write + Send {
+    fn prepare_notifications(&self) -> std::io::Result<Box<dyn FnOnce() + Send>>;
+}
+
+impl ReadWrite for UnixStream {
+    fn prepare_notifications(&self) -> std::io::Result<Box<dyn FnOnce() + Send>> {
+        let interrupt = self.try_clone()?;
+        self.set_read_timeout(None)?;
+        Ok(Box::new(move || {
+            let _ = interrupt.shutdown(Shutdown::Both);
+        }))
+    }
+}
+
+impl ReadWrite for TcpStream {
+    fn prepare_notifications(&self) -> std::io::Result<Box<dyn FnOnce() + Send>> {
+        let interrupt = self.try_clone()?;
+        self.set_read_timeout(None)?;
+        Ok(Box::new(move || {
+            let _ = interrupt.shutdown(Shutdown::Both);
+        }))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Notification {
@@ -190,6 +211,39 @@ impl RpcClient {
     pub fn pop_notification(&mut self) -> Option<Notification> {
         self.notifications.pop_front()
     }
+
+    /// # Errors
+    /// Returns an error if the socket cannot enter interruptible streaming mode.
+    pub fn prepare_notifications(&self) -> Result<Box<dyn FnOnce() + Send>, RpcError> {
+        self.stream
+            .get_ref()
+            .prepare_notifications()
+            .map_err(|source| RpcError::Configure {
+                server: self.server.clone(),
+                source,
+            })
+    }
+
+    /// # Errors
+    /// Returns an error for disconnected, malformed, or unexpected RPC messages.
+    pub fn next_notification(&mut self) -> Result<Notification, RpcError> {
+        if let Some(notification) = self.pop_notification() {
+            return Ok(notification);
+        }
+        let message =
+            rmpv::decode::read_value(&mut self.stream).map_err(|source| RpcError::Decode {
+                method: "notification stream".into(),
+                server: self.server.clone(),
+                source,
+            })?;
+        match parse_message(&message, &self.server)? {
+            Incoming::Notification(notification) => Ok(notification),
+            Incoming::Response { .. } => Err(RpcError::malformed(
+                &self.server,
+                "unexpected response in notification stream",
+            )),
+        }
+    }
 }
 
 enum Incoming {
@@ -359,6 +413,71 @@ mod tests {
 
     use super::{RpcClient, RpcError, run_io_with_timeout};
     use crate::ServerAddress;
+
+    #[test]
+    fn streaming_preserves_partial_frames_across_idle_periods() {
+        let directory = tempdir().expect("temporary directory should exist");
+        let socket = directory.path().join("partial.sock");
+        let listener = UnixListener::bind(&socket).expect("socket should bind");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            let mut bytes = Vec::new();
+            rmpv::encode::write_value(
+                &mut bytes,
+                &Value::Array(vec![
+                    Value::from(2),
+                    Value::from("event"),
+                    Value::Array(vec![Value::from("payload")]),
+                ]),
+            )
+            .expect("frame should encode");
+            stream.write_all(&bytes[..3]).expect("prefix should write");
+            thread::sleep(Duration::from_millis(150));
+            stream.write_all(&bytes[3..]).expect("suffix should write");
+        });
+        let mut client = RpcClient::connect_with_timeout(
+            &ServerAddress::Unix(socket),
+            Duration::from_millis(50),
+        )
+        .expect("client should connect");
+        let interrupt = client
+            .prepare_notifications()
+            .expect("stream should configure");
+        let event = client
+            .next_notification()
+            .expect("partial frame should remain valid");
+        assert_eq!(event.arguments, vec![Value::from("payload")]);
+        interrupt();
+        server.join().expect("server should stop");
+    }
+
+    #[test]
+    fn shutdown_interrupts_an_idle_notification_reader() {
+        let directory = tempdir().expect("temporary directory should exist");
+        let socket = directory.path().join("idle.sock");
+        let listener = UnixListener::bind(&socket).expect("socket should bind");
+        let mut client =
+            RpcClient::connect(&ServerAddress::Unix(socket)).expect("client should connect");
+        let (_peer, _) = listener.accept().expect("peer should accept");
+        let interrupt = client
+            .prepare_notifications()
+            .expect("stream should configure");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            sender
+                .send(client.next_notification())
+                .expect("receiver should exist");
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        interrupt();
+        assert!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("reader should unblock")
+                .is_err()
+        );
+        reader.join().expect("reader should stop");
+    }
 
     #[test]
     fn call_times_out_with_method_and_server_context() {
