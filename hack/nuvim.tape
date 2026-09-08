@@ -27,7 +27,7 @@ Enter
 Wait+Screen /severity/
 Sleep 2s
 
-Type "[{path: 'README.md', row: 2, column: 0, text: 'Improve the introduction', type: 'W'}] | nuvim quickfix set --title 'Documentation review'"
+Type "[{path: 'README.md', row: 2, column: 0, text: 'Improve the introduction', type: 'W'}] | nuvim quickfix set --title 'Documentation review' | select id count title"
 Enter
 Wait+Screen /count/
 Sleep 1s
