@@ -17,7 +17,7 @@ Scope does not include:
 
 - Running Nushell inside Neovim.
 - An editor-side Neovim plugin or native module.
-- Live handler registration or event streaming in version 0.1.
+- Live handler registration through `nuvim expose`.
 - A long-lived connection pool or automatic reconnection.
 
 ## Summary
@@ -46,7 +46,7 @@ second runtime inside the editor.
 ### Non-Goals
 
 - Version 0.1 MUST NOT register every API function as a Nushell command.
-- Version 0.1 MUST NOT implement `nuvim expose` or `nuvim watch`.
+- This implementation MUST NOT register live closures through `nuvim expose`.
 - Version 0.1 SHOULD NOT add Nushell `CustomValue` handles until ordinary records prove the command model.
 
 ## Proposal
@@ -64,8 +64,8 @@ builds do not need code generation before compilation.
 
 ### User workflows
 
-Each Nushell command opens one connection, performs bounded calls, and closes
-the connection. The client MUST accept Unix sockets and TCP addresses supported
+Snapshot and mutation commands open one connection, perform bounded calls, and close
+the connection. Watches retain their connection until the stream ends. The client MUST accept Unix sockets and TCP addresses supported
 by Neovim `--listen`.
 
 The initial command surface is:
@@ -169,12 +169,14 @@ Cursor, buffer selection, range edits, and Ex commands form the stable control
 surface. Selection, file opening, replacement, diagnostics, quickfix, scratch
 buffers, raw calls, and Lua evaluation use the same RPC client.
 
-### Future event streams
+### Event streams
 
-`nuvim watch buffer` SHOULD call `nvim_buf_attach` and keep reading RPC
-notifications. It should map `nvim_buf_lines_event` notifications into a
-Nushell list stream without collecting them. Signal cleanup MUST detach buffers
-and delete temporary autocmds.
+`nuvim watch buffer` calls `nvim_buf_attach` and reads notifications on an interruptible socket.
+Save and diagnostic watches register buffer-local autocmds that send RPC notifications.
+The Rust reader MUST bound its queue and report overflow instead of dropping events silently.
+Pipeline closure and interruption MUST shut down the socket and stop the reader.
+Neovim detaches buffer listeners on disconnect; an editor timer removes temporary autocmds.
+See [automation workflows](automation.md) for command contracts and cleanup behavior.
 
 ### Validation
 

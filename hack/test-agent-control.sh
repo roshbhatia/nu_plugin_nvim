@@ -24,7 +24,9 @@ fi
 mkdir -p "$test_root/config/nushell" "$test_root/data"
 touch "$test_root/config/nushell/config.nu"
 
-nvim --headless --clean -n -u NONE --listen "$test_socket" \
+env XDG_CONFIG_HOME="$test_root/config" XDG_DATA_HOME="$test_root/data" \
+  XDG_STATE_HOME="$test_root/state" XDG_CACHE_HOME="$test_root/cache" \
+  nvim --headless --clean -n -u NONE --listen "$test_socket" \
   < /dev/null > "$test_root/nvim.log" 2>&1 &
 test_pid=$!
 
@@ -61,3 +63,12 @@ env \
   XDG_DATA_HOME="$test_root/data" \
   nu --no-config-file --plugins "$test_plugin" \
   "$repo_root/tests/recipes.nu"
+
+env \
+  NUVIM_TEST_PLUGIN="$test_plugin" \
+  NUVIM_TEST_SERVER="$test_socket" \
+  XDG_CONFIG_HOME="$test_root/config" \
+  XDG_DATA_HOME="$test_root/data" \
+  NUVIM_TEST_OUTPUT="$test_root/watch-save.txt" \
+  timeout 90s nu --no-config-file --plugins "$test_plugin" \
+  "$repo_root/tests/advanced.nu"

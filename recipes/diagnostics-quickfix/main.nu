@@ -31,5 +31,5 @@ def main [
   if $open {
     nuvim quickfix open --server $target | ignore
   }
-  $result | insert server $target
+  $result | upsert server $target
 }

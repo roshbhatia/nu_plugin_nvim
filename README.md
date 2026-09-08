@@ -68,7 +68,7 @@ cargo test --workspace
 
 ## Nushell commands
 
-The version 0.1 surface is:
+The command surface is:
 
 ```text
 nuvim
@@ -83,14 +83,23 @@ nuvim selection
 nuvim open [paths...]
 nuvim edit <row> <column> [--end-row <row>] [--end-column <column>] [--buffer <id>]
 nuvim replace [--selection] [--buffer <id>]
+nuvim transform <closure> [--buffer <id> | --selection] [--preview]
 nuvim diagnostics
-nuvim quickfix get
-nuvim quickfix set [--title <text>]
+nuvim quickfix get [--id <id>] [--details] [--window <id>]
+nuvim quickfix set [--title <text>] [--action new|append|replace] [--id <id>] [--context <value>] [--window <id>]
+nuvim quickfix history [--window <id>]
 nuvim quickfix open [--height <rows>]
 nuvim scratch [--name <name>] [--filetype <name>]
 nuvim command <ex-command>
 nuvim call <method> [arguments...]
 nuvim lua <code> [arguments...]
+nuvim symbols [--buffer <id>]
+nuvim references [--buffer <id>] [--row <row> --column <byte>]
+nuvim definition [--buffer <id>] [--row <row> --column <byte>]
+nuvim node [--buffer <id>] [--row <row> --column <byte>]
+nuvim watch buffer [--buffer <id>] [--initial]
+nuvim watch save [--buffer <id>]
+nuvim watch diagnostics [--buffer <id>]
 ```
 
 Every editor command accepts `--server <socket-or-host:port>`.
@@ -247,6 +256,8 @@ ls | nuvim scratch --name files --filetype nuon
 The [recipes directory](recipes) contains one folder per workflow.
 Each folder has a runnable Nushell script and a focused README.
 
+See [automation workflows](docs/automation.md) for guarded transforms, quickfix history, semantic queries, and event streams.
+
 ## Deferred work
 
 `CustomValue` handles remain deferred until ordinary records prove the command model.
@@ -255,10 +266,6 @@ The protocol already keeps handle type, ID, and server identity separate from Nu
 `nuvim expose` should keep a plugin command alive and call `EngineInterface::eval_closure_with_stream()` for registered closures.
 It needs a second callback channel so Neovim never waits on the command channel that must return its result.
 Requests and responses should use versioned IDs, structured results, and explicit errors.
-
-`nuvim watch buffer` should call `nvim_buf_attach` and map `nvim_buf_lines_event` notifications into a Nushell list stream.
-Autocommand watches should call `rpcnotify()` on the client channel.
-Signal cleanup must detach buffers and delete temporary autocmds.
 
 ## Current API sources
 

@@ -15,6 +15,11 @@ use rmpv::Value as RpcValue;
 use crate::NuvimPlugin;
 use crate::value::{msgpack_to_nu, nu_to_msgpack};
 
+mod query;
+mod quickfix;
+mod transform;
+mod watch;
+
 #[derive(Clone, Copy)]
 enum CommandKind {
     Root,
@@ -47,7 +52,7 @@ pub fn all() -> Vec<Box<dyn PluginCommand<Plugin = NuvimPlugin>>> {
         Open, QuickfixGet, QuickfixOpen, QuickfixSet, Replace, Root, Scratch, Selection, Servers,
         Text,
     };
-    [
+    let mut commands: Vec<Box<dyn PluginCommand<Plugin = NuvimPlugin>>> = [
         Root,
         Servers,
         Context,
@@ -71,7 +76,12 @@ pub fn all() -> Vec<Box<dyn PluginCommand<Plugin = NuvimPlugin>>> {
     ]
     .into_iter()
     .map(|kind| Box::new(NuvimCommand(kind)) as Box<dyn PluginCommand<Plugin = NuvimPlugin>>)
-    .collect()
+    .collect();
+    commands.push(Box::new(transform::Transform));
+    commands.push(Box::new(quickfix::History));
+    commands.extend(query::commands());
+    commands.extend(watch::commands());
+    commands
 }
 
 impl PluginCommand for NuvimCommand {
@@ -115,10 +125,11 @@ impl PluginCommand for NuvimCommand {
             | CommandKind::Selection => {
                 server_flag(signature).input_output_type(Type::Nothing, Type::Record(vec![].into()))
             }
-            CommandKind::Buffers | CommandKind::Diagnostics | CommandKind::QuickfixGet => {
-                server_flag(signature)
-                    .input_output_type(Type::Nothing, Type::List(Type::Any.into()))
-            }
+            CommandKind::Buffers | CommandKind::Diagnostics => server_flag(signature)
+                .input_output_type(Type::Nothing, Type::List(Type::Any.into())),
+            CommandKind::QuickfixGet => quickfix::flags(server_flag(signature))
+                .switch("details", "Return list identity, context, and items", None)
+                .input_output_type(Type::Nothing, Type::Any),
             CommandKind::Text => text_signature(signature),
             CommandKind::CursorSet => server_flag(signature)
                 .required("row", SyntaxShape::Int, "Zero-based cursor row")
@@ -147,14 +158,7 @@ impl PluginCommand for NuvimCommand {
                     Some('b'),
                 )
                 .input_output_type(Type::Any, Type::Record(vec![].into())),
-            CommandKind::QuickfixSet => server_flag(signature)
-                .named(
-                    "title",
-                    SyntaxShape::String,
-                    "Quickfix list title",
-                    Some('t'),
-                )
-                .input_output_type(Type::Any, Type::Record(vec![].into())),
+            CommandKind::QuickfixSet => quickfix::set_signature(signature),
             CommandKind::QuickfixOpen => server_flag(signature)
                 .named("height", SyntaxShape::Int, "Quickfix window height", None)
                 .input_output_type(Type::Any, Type::Nothing),
@@ -214,7 +218,7 @@ impl PluginCommand for NuvimCommand {
             CommandKind::Replace => "Replace a buffer or visual selection with pipeline input",
             CommandKind::Diagnostics => "List Neovim diagnostics as records",
             CommandKind::QuickfixGet => "Get quickfix items with zero-based positions",
-            CommandKind::QuickfixSet => "Replace the quickfix list from pipeline records",
+            CommandKind::QuickfixSet => "Create, append, or replace a quickfix or location list",
             CommandKind::QuickfixOpen => "Open the Neovim quickfix window",
             CommandKind::Scratch => "Open pipeline input in a scratch buffer",
             CommandKind::Command => "Execute an Ex command and return the resulting context",
@@ -788,13 +792,7 @@ fn diagnostics(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, 
 }
 
 fn quickfix_get(engine: &EngineInterface, call: &EvaluatedCall) -> Result<Value, LabeledError> {
-    let span = call.head;
-    let mut client = connect(engine, call)?;
-    let result = rpc(
-        client.nvim_exec_lua([RpcValue::from(QUICKFIX_GET_LUA), RpcValue::Array(vec![])]),
-        span,
-    )?;
-    msgpack_to_nu(&result, client.server(), span)
+    quickfix::run(engine, call, "get", RpcValue::Nil)
 }
 
 fn quickfix_set(
@@ -825,33 +823,7 @@ fn quickfix_set(
         .map(quickfix_from_nu)
         .map(|item| item.and_then(|item| item.to_rpc_value().map_err(|error| labeled(error, span))))
         .collect::<Result<Vec<_>, _>>()?;
-    let count = i64::try_from(items.len()).map_err(|error| labeled(error, span))?;
-    let title = call
-        .get_flag::<String>("title")
-        .map_err(LabeledError::from)?
-        .unwrap_or_else(|| "Nuvim".into());
-    let mut client = connect(engine, call)?;
-    rpc(
-        client.nvim_call_function([
-            RpcValue::from("setqflist"),
-            RpcValue::Array(vec![
-                RpcValue::Array(vec![]),
-                RpcValue::from("r"),
-                RpcValue::Map(vec![
-                    (RpcValue::from("title"), RpcValue::from(title.clone())),
-                    (RpcValue::from("items"), RpcValue::Array(items)),
-                ]),
-            ]),
-        ]),
-        span,
-    )?;
-    Ok(record(
-        [
-            ("count", Value::int(count, span)),
-            ("title", Value::string(title, span)),
-        ],
-        span,
-    ))
+    quickfix::run(engine, call, "set", RpcValue::Array(items))
 }
 
 fn quickfix_open(
@@ -1436,20 +1408,3 @@ for _, diagnostic in ipairs(vim.diagnostic.get(nil)) do
 end
 return output
 ";
-
-const QUICKFIX_GET_LUA: &str = r#"
-local output = {}
-for _, item in ipairs(vim.fn.getqflist()) do
-  table.insert(output, {
-    path = item.bufnr > 0 and vim.api.nvim_buf_get_name(item.bufnr) or item.filename,
-    row = item.lnum > 0 and item.lnum - 1 or nil,
-    column = item.col > 0 and item.col - 1 or nil,
-    end_row = item.end_lnum > 0 and item.end_lnum - 1 or nil,
-    end_column = item.end_col > 0 and item.end_col - 1 or nil,
-    text = item.text,
-    type = item.type ~= "" and item.type or nil,
-    valid = item.valid == 1,
-  })
-end
-return output
-"#;

@@ -6,7 +6,7 @@ cd "$repo_root"
 
 {
   printf '%s\n' Cargo.lock Cargo.toml flake.lock flake.nix README.md
-  find crates -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -print
+  find crates -type f \( -name '*.rs' -o -name '*.lua' -o -name 'Cargo.toml' \) -print
   printf '%s\n' \
     hack/nuvim.tape \
     hack/screenshot-diagnostics.lua \
