@@ -64,6 +64,20 @@ if $replaced_selection != [cafX] {
   error make {msg: $"UTF-8 selection replacement returned ($replaced_selection | to nuon)"}
 }
 
+let selection_error = (try {
+  "unexpected" | nuvim replace --selection --buffer $scratch.id --server $server
+  null
+} catch { |error| $error.msg })
+if $selection_error == null or not ($selection_error | str contains "--selection cannot be combined with --buffer") {
+  error make {msg: $"conflicting replacement flags returned ($selection_error)"}
+}
+if (nuvim text --buffer $unicode_selection.id --server $server | get lines) != [cafX] {
+  error make {msg: "conflicting flags changed the current buffer"}
+}
+if (nuvim text --buffer $scratch.id --server $server | get lines) != $non_current {
+  error make {msg: "conflicting flags changed the requested buffer"}
+}
+
 nuvim lua '
   local buffer = ...
   local namespace = vim.api.nvim_create_namespace("nuvim-test")

@@ -1,9 +1,7 @@
+use ../common.nu resolve-server
+
 def main [--server: string] {
-  let target = if $server == null {
-    nuvim servers | first | get server
-  } else {
-    $server
-  }
+  let target = (resolve-server $server)
 
   let buffer = (
     [alpha beta gamma]

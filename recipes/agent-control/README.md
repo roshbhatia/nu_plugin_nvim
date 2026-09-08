@@ -10,6 +10,9 @@ Run it while one Neovim server is available:
 nu recipes/agent-control/main.nu
 ```
 
+The recipe uses `$NVIM` when set and otherwise requires exactly one discovered editor.
+It rejects ambiguous discovery before creating a scratch buffer.
+
 Select a specific editor when several are running:
 
 ```nu

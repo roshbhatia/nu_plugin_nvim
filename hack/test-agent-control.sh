@@ -53,3 +53,11 @@ env \
   XDG_DATA_HOME="$test_root/data" \
   nu --no-config-file --plugins "$test_plugin" \
   "$repo_root/tests/agent-control.nu"
+
+env \
+  NUVIM_TEST_PLUGIN="$test_plugin" \
+  NUVIM_TEST_SERVER="$test_socket" \
+  XDG_CONFIG_HOME="$test_root/config" \
+  XDG_DATA_HOME="$test_root/data" \
+  nu --no-config-file --plugins "$test_plugin" \
+  "$repo_root/tests/recipes.nu"

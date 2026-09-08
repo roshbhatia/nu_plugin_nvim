@@ -732,6 +732,18 @@ fn replace(
     input: PipelineData,
 ) -> Result<Value, LabeledError> {
     let span = call.head;
+    let selection = call.has_flag("selection").map_err(LabeledError::from)?;
+    if selection
+        && call
+            .get_flag::<i64>("buffer")
+            .map_err(LabeledError::from)?
+            .is_some()
+    {
+        return Err(labeled(
+            "--selection cannot be combined with --buffer",
+            span,
+        ));
+    }
     let value = input.into_value(span).map_err(LabeledError::from)?;
     let lines = value_to_lines(&value, None, span)?;
     let rpc_lines = RpcValue::Array(
@@ -741,7 +753,6 @@ fn replace(
             .collect(),
     );
     let mut client = connect(engine, call)?;
-    let selection = call.has_flag("selection").map_err(LabeledError::from)?;
     let buffer = selected_buffer(&mut client, call, span)?;
     if selection {
         rpc(

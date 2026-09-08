@@ -77,8 +77,23 @@ selected=$(run_nu 'nuvim | get server')
 count=$(run_nu 'nuvim servers | length')
 [[ $count == 1 ]]
 
+selected=$(run_nu "source '$repo_root/recipes/agent-control/main.nu'; main | get server")
+[[ $selected == "$first_socket" ]]
+run_nu 'nuvim command bwipeout | ignore'
+
 second_socket="$runtime_dir/nvim.two.0"
 second_pid=$(start_editor "$second_socket" "$test_root/two.md")
+
+if run_nu "source '$repo_root/recipes/agent-control/main.nu'; main" > "$test_root/ambiguous-recipe.out" 2>&1; then
+  echo "ERROR: agent recipe selected an ambiguous server" >&2
+  exit 1
+fi
+if ! grep -F "found 2 Neovim servers" "$test_root/ambiguous-recipe.out" > /dev/null; then
+  cat "$test_root/ambiguous-recipe.out" >&2
+  exit 1
+fi
+selected=$(run_nu "source '$repo_root/recipes/agent-control/main.nu'; main --server '$second_socket' | get server")
+[[ $selected == "$second_socket" ]]
 
 selected=$(
   NVIM="$first_socket" \
@@ -86,6 +101,15 @@ selected=$(
     XDG_DATA_HOME="$test_root/data" \
     XDG_RUNTIME_DIR="$runtime_dir" \
     nu --no-config-file --plugins "$test_plugin" -c 'nuvim | get server'
+)
+[[ $selected == "$first_socket" ]]
+selected=$(
+  NVIM="$first_socket" \
+    XDG_CONFIG_HOME="$test_root/config" \
+    XDG_DATA_HOME="$test_root/data" \
+    XDG_RUNTIME_DIR="$runtime_dir" \
+    nu --no-config-file --plugins "$test_plugin" -c \
+    "source '$repo_root/recipes/agent-control/main.nu'; main | get server"
 )
 [[ $selected == "$first_socket" ]]
 selected=$(run_nu "nuvim --server '$second_socket' | get server")

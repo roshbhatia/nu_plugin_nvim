@@ -150,6 +150,8 @@ git diff --name-only
 
 Replace the last visual selection:
 
+`--selection` cannot be combined with `--buffer`.
+
 ```nu
 nuvim selection
 | get text

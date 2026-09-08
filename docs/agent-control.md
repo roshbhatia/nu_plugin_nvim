@@ -64,6 +64,8 @@ Replace an exact range by supplying its exclusive end position:
 Use `--buffer <id>` to edit a non-current buffer. Use `nuvim replace` only when
 the whole buffer or last visual selection is the intended target.
 
+`nuvim replace --selection` rejects `--buffer` because visual selection marks belong to the current buffer.
+
 Edits remain unsaved. Save only when the workflow requires it:
 
 ```nu
