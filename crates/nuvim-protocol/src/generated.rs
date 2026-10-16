@@ -4,7 +4,7 @@ use rmpv::Value;
 
 use crate::{RpcClient, RpcError};
 
-pub const NVIM_API_VERSION: (u64, u64, u64) = (0, 12, 5);
+pub const NVIM_API_VERSION: (u64, u64, u64) = (0, 12, 6);
 pub const NVIM_API_LEVEL: u64 = 14;
 pub const NVIM_API_COMPATIBLE: u64 = 0;
 
