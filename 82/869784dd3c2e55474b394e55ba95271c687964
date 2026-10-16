@@ -1,0 +1,29 @@
+Cargo.toml
+  s_c4706d5f7b8e30::t_b4d6a5e1c2e215 21-22
+crates/nuvim-protocol/src/generated.rs
+  s_c4706d5f7b8e30::t_8967de1ab99004 7
+docs/media.sha256
+  s_c4706d5f7b8e30::t_87d3f109d3a54d 1
+flake.lock
+  s_c4706d5f7b8e30::t_6fffce6a69e374 5-6,9
+flake.nix
+  s_c4706d5f7b8e30::t_a7e4229c99e053 59,117
+tests/recipes.nu
+  s_c4706d5f7b8e30::t_0dc89b51b9854c 3-12,19,29,38,47,52,66,85,91,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82869784dd3c2e55474b394e55ba95271c687964",
+  "prompts": {},
+  "sessions": {
+    "s_c4706d5f7b8e30": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14114-b1c5-7eb2-8ccd-594dc57f7c79",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Roshan Bhatia <rshnbhatia@gmail.com>"
+    }
+  }
+}
