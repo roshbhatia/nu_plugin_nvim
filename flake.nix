@@ -56,7 +56,7 @@
           common = {
             version = "0.1.1";
             src = runtimeSource;
-            cargoHash = "sha256-YnvgdbqQA5mRlDVBPXFwDHQ3/fmO05VkPRr3Bwe0jkU=";
+            cargoHash = "sha256-jJ2JPelYCfFRe0SrtxekJdyc1xFvsEig4f5iNeys6kM=";
           };
           runtime = pkgs.rustPlatform.buildRustPackage (
             common
@@ -114,7 +114,7 @@
             pname = "nu-plugin-nuvim-checks";
             version = "0.1.1";
             src = self;
-            cargoHash = "sha256-YnvgdbqQA5mRlDVBPXFwDHQ3/fmO05VkPRr3Bwe0jkU=";
+            cargoHash = "sha256-jJ2JPelYCfFRe0SrtxekJdyc1xFvsEig4f5iNeys6kM=";
             cargoBuildFlags = [
               "-p"
               "nu-plugin-nuvim"
